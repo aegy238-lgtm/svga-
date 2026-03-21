@@ -19,6 +19,7 @@ interface MultiSvgaItem {
   fps: number;
   frames: number;
   videoItem: any;
+  presetId: string;
 }
 
 interface MultiSvgaViewerProps {
@@ -90,6 +91,8 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
   const [isZipping, setIsZipping] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportDuration, setExportDuration] = useState(10);
+  const [gridCols, setGridCols] = useState(3);
+  const [forceMobileSize, setForceMobileSize] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string>('auto');
   const [showPresetMenu, setShowPresetMenu] = useState(false);
   
@@ -146,7 +149,8 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
               },
               fps: extractedFps,
               frames: videoItem.frames || 0,
-              videoItem
+              videoItem,
+              presetId: 'auto'
             });
           }, (err: any) => {
             reject(err);
@@ -218,7 +222,7 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
         canvasWidth = cardW;
         canvasHeight = cardH;
       } else {
-        cols = items.length <= 2 ? items.length : items.length <= 4 ? 2 : 3;
+        cols = gridCols;
         rows = Math.ceil(items.length / cols);
         cardW = selectedPreset ? selectedPreset.width : 1334;
         cardH = selectedPreset ? selectedPreset.height : 750;
@@ -226,20 +230,17 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
         canvasHeight = rows * cardH + (rows + 1) * padding;
       }
 
-      // Smart Scaling to stay within limits (AVC Level 5.1/5.2 limits)
-      const maxPixels = 8_294_400; // 4K resolution limit for safety
-      const currentPixels = canvasWidth * canvasHeight;
-      if (currentPixels > maxPixels) {
-        const scale = Math.sqrt(maxPixels / currentPixels);
-        cardW = Math.floor(cardW * scale);
-        cardH = Math.floor(cardH * scale);
-        canvasWidth = cols * cardW + (cols + 1) * padding;
-        canvasHeight = rows * cardH + (rows + 1) * padding;
-      }
-
-      // Dimensions must be even for many encoders
-      if (canvasWidth % 2 !== 0) canvasWidth += 1;
-      if (canvasHeight % 2 !== 0) canvasHeight += 1;
+      // Force 750x1334 resolution for mobile compatibility
+      canvasWidth = 750;
+      canvasHeight = 1334;
+      
+      // Force 3 columns for consistent layout
+      cols = 3;
+      rows = Math.ceil(items.length / cols);
+      
+      // Re-calculate card dimensions to fit the fixed canvas
+      cardW = (canvasWidth - (cols + 1) * padding) / cols;
+      cardH = (canvasHeight - (rows + 1) * padding) / rows;
       
       const canvas = document.createElement('canvas');
       canvas.width = canvasWidth;
@@ -282,18 +283,29 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
         output: (chunk, metadata) => muxer.addVideoChunk(chunk, metadata),
         error: (e) => {
           console.error("Encoder Error:", e);
-          alert("خطأ في ترميز الفيديو: " + e.message);
+          // Only alert if the encoder is not already closed
+          if (videoEncoder.state !== 'closed') {
+            alert("خطأ في ترميز الفيديو: " + e.message);
+          }
         }
       });
 
-      // Use a more widely compatible codec string if possible, or stick to High 5.1
-      videoEncoder.configure({
-        codec: 'avc1.640033', // High Profile, Level 5.1
-        width: canvasWidth,
-        height: canvasHeight,
-        bitrate: 8_000_000,
-        framerate: targetFps
-      });
+      try {
+        videoEncoder.configure({
+          codec: 'avc1.4D4033', // Main Profile, Level 5.1
+          width: canvasWidth,
+          height: canvasHeight,
+          bitrate: 4_000_000,
+          framerate: targetFps
+        });
+      } catch (e) {
+        console.error("Encoder Configuration Error:", e);
+        alert("خطأ في إعدادات ترميز الفيديو: " + (e instanceof Error ? e.message : String(e)));
+        document.body.removeChild(renderContainer);
+        setIsExporting(false);
+        setExportProgress(0);
+        return;
+      }
 
       const offscreenPlayers = items.map(item => {
         const w = items.length === 1 ? (selectedPreset ? selectedPreset.width : item.dimensions.width) : cardW;
@@ -353,9 +365,10 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
           if (internalCanvas) {
             const sw = item.dimensions.width;
             const sh = item.dimensions.height;
+            const preset = DEVICE_PRESETS.find(p => p.id === item.presetId);
             
             // Manual AspectFill calculation for video export
-            const scale = selectedPreset ? Math.max(cardW / sw, cardH / sh) : 1;
+            const scale = preset ? Math.max(cardW / sw, cardH / sh) : 1;
             const finalW = sw * scale;
             const finalH = sh * scale;
             const dx = x + (cardW - finalW) / 2;
@@ -573,19 +586,28 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
               {/* Standard Sizes */}
               <div className="flex items-center gap-2 bg-white/5 p-1.5 rounded-2xl border border-white/10">
                 <button 
-                  onClick={() => setSelectedPresetId('ip8')}
+                  onClick={() => {
+                    setSelectedPresetId('ip8');
+                    setItems(prev => prev.map(i => ({ ...i, presetId: 'ip8' })));
+                  }}
                   className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${selectedPresetId === 'ip8' ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
                 >
                   750 × 1334
                 </button>
                 <button 
-                  onClick={() => setSelectedPresetId('sq500')}
+                  onClick={() => {
+                    setSelectedPresetId('sq500');
+                    setItems(prev => prev.map(i => ({ ...i, presetId: 'sq500' })));
+                  }}
                   className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${selectedPresetId === 'sq500' ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
                 >
                   500 × 500
                 </button>
                 <button 
-                  onClick={() => setSelectedPresetId('auto')}
+                  onClick={() => {
+                    setSelectedPresetId('auto');
+                    setItems(prev => prev.map(i => ({ ...i, presetId: 'auto' })));
+                  }}
                   className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${selectedPresetId === 'auto' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'}`}
                 >
                   تلقائي
@@ -658,6 +680,28 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
 
               <div className="h-8 w-px bg-white/10 mx-2" />
 
+              <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-2">
+                <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">عدد الأعمدة:</span>
+                <input 
+                  type="number" 
+                  min="1" 
+                  max="5"
+                  value={gridCols}
+                  onChange={(e) => setGridCols(Math.max(1, Math.min(5, parseInt(e.target.value) || 1)))}
+                  className="w-16 bg-transparent text-white font-black text-sm focus:outline-none text-center"
+                />
+              </div>
+              <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-2">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input 
+                    type="checkbox" 
+                    checked={forceMobileSize}
+                    onChange={(e) => setForceMobileSize(e.target.checked)}
+                    className="w-4 h-4 accent-indigo-500"
+                  />
+                  <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">تصدير لمقاس جوال (9:16)</span>
+                </label>
+              </div>
               <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-2">
                 <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">مدة الفيديو (ثواني):</span>
                 <input 
@@ -818,11 +862,14 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
             <p className="text-slate-500 text-sm font-bold uppercase tracking-widest">يدعم جميع المقاسات بما فيها 750×1334 الطولية</p>
           </div>
         ) : (
-          <div className="p-8 flex flex-wrap justify-center gap-12 overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar">
+          <div 
+            className="p-8 grid gap-12 overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar"
+            style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}
+          >
             <AnimatePresence mode="popLayout">
               {items.map((item) => (
                 <SvgaCard 
-                  key={`${item.id}-${selectedPresetId}`} 
+                  key={`${item.id}-${item.presetId}`} 
                   item={item} 
                   onRemove={() => removeItem(item.id)} 
                   onMaximize={() => setSelectedItemId(item.id)}
@@ -830,7 +877,7 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
                   onDownloadSvga={() => handleDownloadSvga(item)}
                   previewBg={previewBg}
                   watermark={watermark}
-                  selectedPreset={selectedPreset}
+                  onUpdatePreset={(presetId) => setItems(prev => prev.map(i => i.id === item.id ? { ...i, presetId } : i))}
                 />
               ))}
             </AnimatePresence>
@@ -1025,8 +1072,8 @@ const SvgaCard: React.FC<{
   onDownloadSvga: () => void;
   previewBg: string | null;
   watermark: string | null;
-  selectedPreset?: DevicePreset;
-}> = ({ item, onRemove, onMaximize, onDownload, onDownloadSvga, previewBg, watermark, selectedPreset }) => {
+  onUpdatePreset: (presetId: string) => void;
+}> = ({ item, onRemove, onMaximize, onDownload, onDownloadSvga, previewBg, watermark, onUpdatePreset }) => {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
@@ -1034,6 +1081,7 @@ const SvgaCard: React.FC<{
   const [showInfo, setShowInfo] = useState(false);
   const [zoom, setZoom] = useState(1);
   const isPortrait = item.dimensions.height > item.dimensions.width;
+  const selectedPreset = useMemo(() => DEVICE_PRESETS.find(p => p.id === item.presetId), [item.presetId]);
 
   useEffect(() => {
     if (!containerRef.current || !item.videoItem) return;
@@ -1047,8 +1095,8 @@ const SvgaCard: React.FC<{
     player.loops = 0;
     player.clearsAfterStop = false;
     
-    // Always use Fill since we are perfectly sizing the container
-    player.setContentMode('Fill');
+    // Always use AspectFit since we want the whole SVGA to be visible
+    player.setContentMode('AspectFit');
     player.setVideoItem(item.videoItem);
 
     const observer = new IntersectionObserver((entries) => {
@@ -1281,7 +1329,7 @@ const SvgaCard: React.FC<{
 
       {/* Info Footer */}
       <div className="p-5 bg-white/[0.02] z-10">
-        <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center justify-between mb-4">
           <h4 className="text-white font-black text-sm truncate max-w-[150px]" title={item.name}>
             {item.name}
           </h4>
@@ -1289,6 +1337,18 @@ const SvgaCard: React.FC<{
             {(item.size / 1024).toFixed(1)} KB
           </span>
         </div>
+        
+        {/* Preset Selector */}
+        <select 
+          value={item.presetId}
+          onChange={(e) => onUpdatePreset(e.target.value)}
+          className="w-full bg-white/5 border border-white/10 rounded-xl px-3 py-2 text-[10px] text-white font-black uppercase tracking-widest focus:outline-none focus:border-indigo-500 transition-all mb-4"
+        >
+          <option value="auto">تلقائي (Native)</option>
+          {DEVICE_PRESETS.map(p => (
+            <option key={p.id} value={p.id}>{p.name}</option>
+          ))}
+        </select>
         
         <AnimatePresence>
           {showInfo && (
