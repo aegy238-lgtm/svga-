@@ -37,7 +37,7 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
   const [exportDuration, setExportDuration] = useState(10);
   
   const [wmSettings, setWmSettings] = useState({
-    position: 'bottom-right' as 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center' | 'full' | 'tiled',
+    position: 'bottom-right' as 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center',
     size: 15,
     opacity: 0.5
   });
@@ -312,34 +312,17 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
         });
 
         if (wmImg) {
-          ctx.globalAlpha = wmSettings.opacity;
-          if (wmSettings.position === 'full') {
-            ctx.drawImage(wmImg, 0, 0, canvasWidth, canvasHeight);
-          } else if (wmSettings.position === 'tiled') {
-            const wmSize = Math.min(canvasWidth, canvasHeight) * (wmSettings.size / 100);
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = wmSize;
-            tempCanvas.height = wmSize;
-            const tempCtx = tempCanvas.getContext('2d')!;
-            tempCtx.drawImage(wmImg, 0, 0, wmSize, wmSize);
-            
-            const pattern = ctx.createPattern(tempCanvas, 'repeat');
-            if (pattern) {
-              ctx.fillStyle = pattern;
-              ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-            }
-          } else {
-            const wmSize = Math.min(canvasWidth, canvasHeight) * (wmSettings.size / 100);
-            let wx = 0, wy = 0;
-            switch(wmSettings.position) {
-              case 'top-left': wx = 40; wy = 40; break;
-              case 'top-right': wx = canvasWidth - wmSize - 40; wy = 40; break;
-              case 'bottom-left': wx = 40; wy = canvasHeight - wmSize - 40; break;
-              case 'bottom-right': wx = canvasWidth - wmSize - 40; wy = canvasHeight - wmSize - 40; break;
-              case 'center': wx = (canvasWidth - wmSize) / 2; wy = (canvasHeight - wmSize) / 2; break;
-            }
-            ctx.drawImage(wmImg, wx, wy, wmSize, wmSize);
+          const wmSize = Math.min(canvasWidth, canvasHeight) * (wmSettings.size / 100);
+          let wx = 0, wy = 0;
+          switch(wmSettings.position) {
+            case 'top-left': wx = 40; wy = 40; break;
+            case 'top-right': wx = canvasWidth - wmSize - 40; wy = 40; break;
+            case 'bottom-left': wx = 40; wy = canvasHeight - wmSize - 40; break;
+            case 'bottom-right': wx = canvasWidth - wmSize - 40; wy = canvasHeight - wmSize - 40; break;
+            case 'center': wx = (canvasWidth - wmSize) / 2; wy = (canvasHeight - wmSize) / 2; break;
           }
+          ctx.globalAlpha = wmSettings.opacity;
+          ctx.drawImage(wmImg, wx, wy, wmSize, wmSize);
           ctx.globalAlpha = 1.0;
         }
 
@@ -380,6 +363,18 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
           <h2 className="text-3xl font-black text-white flex items-center gap-3">
             <Layers className="w-8 h-8 text-indigo-500" />
             نظام العرض الذكي لملفات SVGA
+            {items.length > 0 && (
+              <motion.div 
+                initial={{ opacity: 0, x: -10 }}
+                animate={{ opacity: 1, x: 0 }}
+                className="flex items-center gap-2 px-3 py-1 bg-indigo-500/10 border border-indigo-500/20 rounded-full"
+              >
+                <div className="w-2 h-2 bg-indigo-500 rounded-full animate-pulse" />
+                <span className="text-xs font-black text-indigo-400 uppercase tracking-widest">
+                  {items.length} {items.length === 1 ? 'ملف مرفوع' : 'ملفات مرفوعة'}
+                </span>
+              </motion.div>
+            )}
           </h2>
           <p className="text-slate-500 font-bold mt-1 uppercase tracking-widest text-xs">
             دعم كامل لجميع المقاسات (500×500, 750×1334, 2000×2000) مع الحفاظ على الجودة
@@ -495,8 +490,6 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
                   <option value="bottom-left">أسفل يسار</option>
                   <option value="bottom-right">أسفل يمين</option>
                   <option value="center">منتصف</option>
-                  <option value="full">ملء الشاشة (تمديد)</option>
-                  <option value="tiled">تكرار (تغطية كاملة)</option>
                 </select>
                 <div className="flex flex-col gap-1">
                   <span className="text-[8px] text-slate-500 uppercase font-black">الحجم</span>
@@ -543,7 +536,7 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
             <p className="text-slate-500 text-sm font-bold uppercase tracking-widest">يدعم جميع المقاسات بما فيها 750×1334 الطولية</p>
           </div>
         ) : (
-          <div className="p-8 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-8 overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar auto-rows-max">
+          <div className="p-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8 overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar auto-rows-max">
             <AnimatePresence mode="popLayout">
               {items.map((item) => (
                 <SvgaCard 
@@ -553,7 +546,6 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
                   onMaximize={() => setSelectedItemId(item.id)}
                   previewBg={previewBg}
                   watermark={watermark}
-                  wmSettings={wmSettings}
                 />
               ))}
             </AnimatePresence>
@@ -617,21 +609,7 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
                   {watermark && (
                     <img 
                       src={watermark} 
-                      className="absolute pointer-events-none" 
-                      style={{
-                        opacity: wmSettings.opacity,
-                        ...(wmSettings.position === 'full' ? {
-                          inset: 0, width: '100%', height: '100%', objectFit: 'fill'
-                        } : wmSettings.position === 'tiled' ? {
-                          inset: 0, width: '100%', height: '100%', 
-                          backgroundImage: `url(${watermark})`,
-                          backgroundRepeat: 'repeat',
-                          backgroundSize: `${wmSettings.size}%`,
-                          backgroundColor: 'transparent'
-                        } : {
-                          bottom: '4%', right: '4%', width: wmSettings.size + '%', height: 'auto'
-                        })
-                      }}
+                      className="absolute bottom-4 right-4 w-16 h-16 object-contain opacity-50 pointer-events-none" 
                       alt="watermark"
                     />
                   )}
@@ -686,8 +664,7 @@ const SvgaCard: React.FC<{
   onMaximize: () => void;
   previewBg: string | null;
   watermark: string | null;
-  wmSettings: any;
-}> = ({ item, onRemove, onMaximize, previewBg, watermark, wmSettings }) => {
+}> = ({ item, onRemove, onMaximize, previewBg, watermark }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -737,30 +714,6 @@ const SvgaCard: React.FC<{
     setIsPlaying(true);
   };
 
-  const getWmStyle = () => {
-    if (wmSettings.position === 'full') {
-      return { inset: 0, width: '100%', height: '100%', objectFit: 'fill' as const };
-    }
-    if (wmSettings.position === 'tiled') {
-      return { 
-        inset: 0, width: '100%', height: '100%', 
-        backgroundImage: `url(${watermark})`,
-        backgroundRepeat: 'repeat',
-        backgroundSize: `${wmSettings.size}%`,
-        backgroundColor: 'transparent'
-      };
-    }
-    const size = wmSettings.size + '%';
-    switch(wmSettings.position) {
-      case 'top-left': return { top: '4%', left: '4%', width: size, height: 'auto' };
-      case 'top-right': return { top: '4%', right: '4%', width: size, height: 'auto' };
-      case 'bottom-left': return { bottom: '4%', left: '4%', width: size, height: 'auto' };
-      case 'bottom-right': return { bottom: '4%', right: '4%', width: size, height: 'auto' };
-      case 'center': return { top: '50%', left: '50%', transform: 'translate(-50%, -50%)', width: size, height: 'auto' };
-      default: return { bottom: '4%', right: '4%', width: size, height: 'auto' };
-    }
-  };
-
   return (
     <motion.div 
       layout
@@ -791,8 +744,7 @@ const SvgaCard: React.FC<{
         {watermark && (
           <img 
             src={watermark} 
-            className="absolute pointer-events-none z-10" 
-            style={{ ...getWmStyle(), opacity: wmSettings.opacity }}
+            className="absolute bottom-4 right-4 w-12 h-12 object-contain opacity-40 pointer-events-none z-10" 
             alt="wm"
           />
         )}
