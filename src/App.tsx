@@ -29,6 +29,9 @@ declare var SVGA: any;
 import { OnboardingModal } from './components/OnboardingModal';
 import { HelpCircle } from 'lucide-react';
 
+const videoWidth = 1334;
+const videoHeight = 750;
+
 const App: React.FC = () => {
   const { currentUser, loading, logout } = useAuth();
   const { checkAccess } = useAccessControl();
@@ -147,7 +150,7 @@ const App: React.FC = () => {
                        for (let f = 0; f < totalFrames; f++) {
                            frames.push({
                                alpha: f === i ? 1.0 : 0.0,
-                               layout: { x: 0, y: 0, width: canvas.width, height: canvas.height },
+                               layout: { x: (videoWidth - canvas.width) / 2, y: (videoHeight - canvas.height) / 2, width: canvas.width, height: canvas.height },
                                transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
                            });
                        }
@@ -162,11 +165,11 @@ const App: React.FC = () => {
 
                const meta: FileMetadata = {
                    name: file.name, size: file.size, type: 'MP4',
-                   dimensions: { width: canvas.width, height: canvas.height },
+                   dimensions: { width: videoWidth, height: videoHeight },
                    fps: fps, frames: totalFrames, assets: [], 
                    videoItem: {
                        version: "2.0",
-                       videoSize: { width: canvas.width, height: canvas.height },
+                       videoSize: { width: videoWidth, height: videoHeight },
                        FPS: fps,
                        frames: totalFrames,
                        images: newLayerImages,

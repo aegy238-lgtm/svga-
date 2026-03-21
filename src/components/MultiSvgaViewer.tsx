@@ -26,6 +26,59 @@ interface MultiSvgaViewerProps {
   currentUser: UserRecord | null;
 }
 
+interface DevicePreset {
+  id: string;
+  name: string;
+  width: number;
+  height: number;
+  category: string;
+}
+
+const DEVICE_PRESETS: DevicePreset[] = [
+  // Standard Series
+  { id: 'ip8', name: '750 × 1334 (iPhone 8)', width: 750, height: 1334, category: 'Standard' },
+  { id: 'sq500', name: '500 × 500 (Square)', width: 500, height: 500, category: 'Standard' },
+  
+  // iPhone Series
+  { id: 'ip15pm', name: 'iPhone 15 Max', width: 1290, height: 2796, category: 'iPhone' },
+  { id: 'ip15p', name: 'iPhone 15 pro', width: 1179, height: 2556, category: 'iPhone' },
+  { id: 'ip13', name: 'iPhone 13', width: 1170, height: 2532, category: 'iPhone' },
+  { id: 'ip12pm', name: 'iPhone 12 Max', width: 1284, height: 2778, category: 'iPhone' },
+  { id: 'ip12p', name: 'iPhone 12 pro', width: 1170, height: 2532, category: 'iPhone' },
+  { id: 'ip12', name: 'iPhone 12', width: 1170, height: 2532, category: 'iPhone' },
+  { id: 'ip11', name: 'iPhone 11', width: 828, height: 1792, category: 'iPhone' },
+  { id: 'ipx', name: 'iPhone X', width: 1125, height: 2436, category: 'iPhone' },
+  { id: 's10', name: '三星 S10', width: 1440, height: 3040, category: 'iPhone' },
+  { id: 's20', name: '三星 S20', width: 1440, height: 3200, category: 'iPhone' },
+  { id: 'mate40p', name: '华为Mate40 pro', width: 1344, height: 2772, category: 'iPhone' },
+  { id: 'p40p', name: '华为 P40 pro', width: 1200, height: 2640, category: 'iPhone' },
+  
+  // Android Series
+  { id: 'mate60p', name: 'Mate 60 Pro', width: 1260, height: 2720, category: 'Android' },
+  { id: 'p70', name: '华为 P70', width: 1256, height: 2760, category: 'Android' },
+  { id: 'mi14', name: '小米14', width: 1200, height: 2670, category: 'Android' },
+  { id: 'mi14u', name: 'Xiaomi 14 Ultra', width: 1440, height: 3200, category: 'Android' },
+  { id: 's21u', name: 'Galaxy S21 Ultra', width: 1440, height: 3200, category: 'Android' },
+  { id: 'oppor17', name: 'OPPO R17', width: 1080, height: 2340, category: 'Android' },
+  { id: 'mi10', name: '小米10', width: 1080, height: 2340, category: 'Android' },
+  { id: 'mi6', name: '小米6', width: 1080, height: 1920, category: 'Android' },
+  { id: 'vivonex3s', name: 'VIVO NEX 3S', width: 1080, height: 2256, category: 'Android' },
+  { id: 'vivox50', name: 'VIVO X50', width: 1080, height: 2376, category: 'Android' },
+  { id: 'oneplus8t', name: '一加8T', width: 1080, height: 2400, category: 'Android' },
+
+  // Tablet Series
+  { id: 'ipadair', name: 'ipad air', width: 1640, height: 2360, category: 'Tablet' },
+  { id: 'ipadpro', name: 'ipad pro', width: 2048, height: 2732, category: 'Tablet' },
+  { id: 'matepadpro', name: 'MatePad Pro', width: 1600, height: 2560, category: 'Tablet' },
+  { id: 'tabs7', name: 'Galaxy Tab S7', width: 1600, height: 2560, category: 'Tablet' },
+
+  // PC Series
+  { id: 'pc800', name: '800*600', width: 800, height: 600, category: 'PC' },
+  { id: 'pc1280', name: '1280*800', width: 1280, height: 800, category: 'PC' },
+  { id: 'pc1920', name: '1920*1080', width: 1920, height: 1080, category: 'PC' },
+  { id: 'pc27', name: '27寸', width: 2560, height: 1440, category: 'PC' },
+];
+
 export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, currentUser }) => {
   const [items, setItems] = useState<MultiSvgaItem[]>([]);
   const [isDragging, setIsDragging] = useState(false);
@@ -37,7 +90,11 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
   const [isZipping, setIsZipping] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportDuration, setExportDuration] = useState(10);
+  const [selectedPresetId, setSelectedPresetId] = useState<string>('auto');
+  const [showPresetMenu, setShowPresetMenu] = useState(false);
   
+  const selectedPreset = useMemo(() => DEVICE_PRESETS.find(p => p.id === selectedPresetId), [selectedPresetId]);
+
   const [wmSettings, setWmSettings] = useState({
     position: 'bottom-right' as 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' | 'center',
     size: 15,
@@ -155,15 +212,16 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
       if (items.length === 1) {
         cols = 1;
         rows = 1;
-        canvasWidth = items[0].dimensions.width;
-        canvasHeight = items[0].dimensions.height;
-        cardSize = Math.max(canvasWidth, canvasHeight);
+        canvasWidth = selectedPreset ? selectedPreset.width : items[0].dimensions.width;
+        canvasHeight = selectedPreset ? selectedPreset.height : items[0].dimensions.height;
+        cardSize = canvasWidth;
       } else {
         cols = items.length <= 2 ? items.length : items.length <= 4 ? 2 : 3;
         rows = Math.ceil(items.length / cols);
-        cardSize = 600; 
-        canvasWidth = cols * cardSize + (cols + 1) * padding;
-        canvasHeight = rows * cardSize + (rows + 1) * padding;
+        const cardW = selectedPreset ? selectedPreset.width : 1334;
+        const cardH = selectedPreset ? selectedPreset.height : 750;
+        canvasWidth = cols * cardW + (cols + 1) * padding;
+        canvasHeight = rows * cardH + (rows + 1) * padding;
       }
 
       // Smart Scaling to stay within limits (AVC Level 5.1/5.2 limits)
@@ -241,17 +299,21 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
       });
 
       const offscreenPlayers = items.map(item => {
+        const cardW = selectedPreset ? selectedPreset.width : item.dimensions.width;
+        const cardH = selectedPreset ? selectedPreset.height : item.dimensions.height;
+        
         const div = document.createElement('div');
-        div.style.width = item.dimensions.width + 'px';
-        div.style.height = item.dimensions.height + 'px';
+        div.style.width = cardW + 'px';
+        div.style.height = cardH + 'px';
         div.style.position = 'absolute';
         div.style.left = '0';
         div.style.top = '0';
         renderContainer.appendChild(div);
+        
         const player = new SVGA.Player(div);
         player.setVideoItem(item.videoItem);
-        player.setContentMode('AspectFit');
-        return { player, div, item };
+        player.setContentMode(selectedPreset ? 'AspectFill' : 'AspectFit');
+        return { player, div, item, cardW, cardH };
       });
 
       // Wait for initialization and warmup
@@ -266,25 +328,21 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
           ctx.fillRect(0, 0, canvasWidth, canvasHeight);
         }
 
-        offscreenPlayers.forEach(({ player, div, item }, index) => {
-          let x, y, currentCardW, currentCardH;
+        offscreenPlayers.forEach(({ player, div, item, cardW, cardH }, index) => {
+          let x, y;
           
           if (items.length === 1) {
             x = 0;
             y = 0;
-            currentCardW = canvasWidth;
-            currentCardH = canvasHeight;
           } else {
             const col = index % cols;
             const row = Math.floor(index / cols);
-            x = padding + col * (cardSize + padding);
-            y = padding + row * (cardSize + padding);
-            currentCardW = cardSize;
-            currentCardH = cardSize;
+            x = padding + col * (cardW + padding);
+            y = padding + row * (cardH + padding);
 
             ctx.fillStyle = 'rgba(255, 255, 255, 0.05)';
             ctx.beginPath();
-            ctx.roundRect(x, y, cardSize, cardSize, 40);
+            ctx.roundRect(x, y, cardW, cardH, 40);
             ctx.fill();
           }
 
@@ -294,21 +352,25 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
 
           const internalCanvas = div.querySelector('canvas');
           if (internalCanvas) {
-            const ratio = Math.min(currentCardW / item.dimensions.width, currentCardH / item.dimensions.height);
-            const w = item.dimensions.width * ratio;
-            const h = item.dimensions.height * ratio;
-            const dx = x + (currentCardW - w) / 2;
-            const dy = y + (currentCardH - h) / 2;
+            const sw = item.dimensions.width;
+            const sh = item.dimensions.height;
             
+            // Manual AspectFill calculation for video export
+            const scale = selectedPreset ? Math.max(cardW / sw, cardH / sh) : 1;
+            const finalW = sw * scale;
+            const finalH = sh * scale;
+            const dx = x + (cardW - finalW) / 2;
+            const dy = y + (cardH - finalH) / 2;
+
             ctx.save();
             ctx.beginPath();
             if (items.length > 1) {
-              ctx.roundRect(x, y, currentCardW, currentCardH, 40);
+              ctx.roundRect(x, y, cardW, cardH, 40);
             } else {
-              ctx.rect(x, y, currentCardW, currentCardH);
+              ctx.rect(x, y, cardW, cardH);
             }
             ctx.clip();
-            ctx.drawImage(internalCanvas, dx, dy, w, h);
+            ctx.drawImage(internalCanvas, dx, dy, finalW, finalH);
             ctx.restore();
           }
         });
@@ -357,17 +419,17 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
 
   const captureFrame = async (item: MultiSvgaItem, frameIndex: number = 0): Promise<Blob> => {
     const canvas = document.createElement('canvas');
-    canvas.width = item.dimensions.width;
-    canvas.height = item.dimensions.height;
+    const dw = selectedPreset ? selectedPreset.width : item.dimensions.width;
+    const dh = selectedPreset ? selectedPreset.height : item.dimensions.height;
+    
+    canvas.width = dw;
+    canvas.height = dh;
     const ctx = canvas.getContext('2d', { alpha: true })!;
-
-    // Ensure transparency
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Render SVGA Frame
     const div = document.createElement('div');
-    div.style.width = item.dimensions.width + 'px';
-    div.style.height = item.dimensions.height + 'px';
+    div.style.width = `${item.dimensions.width}px`;
+    div.style.height = `${item.dimensions.height}px`;
     div.style.position = 'fixed';
     div.style.top = '-9999px';
     document.body.appendChild(div);
@@ -376,14 +438,24 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
       const player = new SVGA.Player(div);
       await new Promise<void>((resolve) => {
         player.setVideoItem(item.videoItem);
+        player.setContentMode('AspectFit'); // Use Fit internally
         player.stepToFrame(frameIndex, false);
-        // Small delay to ensure rendering
-        setTimeout(resolve, 100);
+        setTimeout(resolve, 250);
       });
       
       const svgaCanvas = div.querySelector('canvas');
       if (svgaCanvas) {
-        ctx.drawImage(svgaCanvas, 0, 0, canvas.width, canvas.height);
+        const sw = item.dimensions.width;
+        const sh = item.dimensions.height;
+
+        // Manual AspectFill calculation
+        const scale = selectedPreset ? Math.max(dw / sw, dh / sh) : 1;
+        const finalW = sw * scale;
+        const finalH = sh * scale;
+        const x = (dw - finalW) / 2;
+        const y = (dh - finalH) / 2;
+
+        ctx.drawImage(svgaCanvas, x, y, finalW, finalH);
       }
     } finally {
       document.body.removeChild(div);
@@ -455,6 +527,15 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
     URL.revokeObjectURL(url);
   };
 
+  const handleDownloadSvga = (item: MultiSvgaItem) => {
+    const url = URL.createObjectURL(item.file);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = item.name;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const selectedItem = useMemo(() => items.find(i => i.id === selectedItemId), [items, selectedItemId]);
 
   return (
@@ -486,6 +567,94 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
         <div className="flex flex-wrap items-center gap-3">
           {items.length > 0 && (
             <>
+              {/* Standard Sizes */}
+              <div className="flex items-center gap-2 bg-white/5 p-1.5 rounded-2xl border border-white/10">
+                <button 
+                  onClick={() => setSelectedPresetId('ip8')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${selectedPresetId === 'ip8' ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
+                >
+                  750 × 1334
+                </button>
+                <button 
+                  onClick={() => setSelectedPresetId('sq500')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${selectedPresetId === 'sq500' ? 'bg-indigo-500 text-white shadow-lg shadow-indigo-500/20' : 'text-slate-400 hover:text-white'}`}
+                >
+                  500 × 500
+                </button>
+                <button 
+                  onClick={() => setSelectedPresetId('auto')}
+                  className={`px-4 py-2 rounded-xl text-[10px] font-black transition-all ${selectedPresetId === 'auto' ? 'bg-white/10 text-white' : 'text-slate-400 hover:text-white'}`}
+                >
+                  تلقائي
+                </button>
+              </div>
+
+              <div className="h-8 w-px bg-white/10 mx-1" />
+
+              <div className="relative">
+                <button 
+                  onClick={() => setShowPresetMenu(!showPresetMenu)}
+                  className={`px-6 py-3 rounded-2xl border font-black text-sm transition-all flex items-center gap-2 ${selectedPresetId !== 'auto' ? 'bg-indigo-600 border-indigo-500 text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}
+                >
+                  <Smartphone className="w-4 h-4" />
+                  {selectedPreset ? selectedPreset.name : 'تلقائي (Native)'}
+                </button>
+
+                <AnimatePresence>
+                  {showPresetMenu && (
+                    <>
+                      <div className="fixed inset-0 z-[100]" onClick={() => setShowPresetMenu(false)} />
+                      <motion.div 
+                        initial={{ opacity: 0, y: 10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: 10, scale: 0.95 }}
+                        className="absolute top-full right-0 mt-4 w-[600px] max-h-[500px] bg-slate-900 border border-white/10 rounded-[2.5rem] shadow-2xl overflow-hidden z-[110] flex flex-col"
+                      >
+                        <div className="p-6 border-b border-white/5 flex items-center justify-between bg-white/2">
+                          <h4 className="text-white font-black text-sm flex items-center gap-2">
+                            <Monitor className="w-4 h-4 text-indigo-500" />
+                            اختر مقاس العرض المفضل
+                          </h4>
+                          <button onClick={() => setSelectedPresetId('auto')} className="text-[10px] font-black text-indigo-400 hover:text-indigo-300 uppercase tracking-widest">
+                            إعادة للوضع التلقائي
+                          </button>
+                        </div>
+
+                        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
+                          {['iPhone', 'Android', 'Tablet', 'PC'].map(cat => (
+                            <div key={cat} className="mb-8 last:mb-0">
+                              <h5 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] mb-4 flex items-center gap-2">
+                                <div className="w-1.5 h-1.5 bg-indigo-500 rounded-full" />
+                                {cat === 'iPhone' ? 'سلسلة آيفون' : cat === 'Android' ? 'سلسلة أندرويد' : cat === 'Tablet' ? 'سلسلة الأجهزة اللوحية' : 'سلسلة الكمبيوتر'}
+                              </h5>
+                              <div className="grid grid-cols-3 gap-2">
+                                {DEVICE_PRESETS.filter(p => p.category === cat).map(preset => (
+                                  <button
+                                    key={preset.id}
+                                    onClick={() => {
+                                      setSelectedPresetId(preset.id);
+                                      setShowPresetMenu(false);
+                                    }}
+                                    className={`px-3 py-2.5 rounded-xl text-[10px] font-bold text-right transition-all border ${selectedPresetId === preset.id ? 'bg-indigo-500 border-indigo-400 text-white shadow-lg shadow-indigo-500/20' : 'bg-white/5 border-white/5 text-slate-400 hover:bg-white/10 hover:text-white'}`}
+                                  >
+                                    <div className="flex flex-col">
+                                      <span>{preset.name}</span>
+                                      <span className="text-[8px] opacity-50">{preset.width} × {preset.height}</span>
+                                    </div>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </motion.div>
+                    </>
+                  )}
+                </AnimatePresence>
+              </div>
+
+              <div className="h-8 w-px bg-white/10 mx-2" />
+
               <div className="flex items-center gap-2 bg-white/5 border border-white/10 rounded-2xl px-4 py-2">
                 <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">مدة الفيديو (ثواني):</span>
                 <input 
@@ -646,17 +815,19 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
             <p className="text-slate-500 text-sm font-bold uppercase tracking-widest">يدعم جميع المقاسات بما فيها 750×1334 الطولية</p>
           </div>
         ) : (
-          <div className="p-8 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-8 overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar auto-rows-max">
+          <div className="p-8 flex flex-wrap justify-center gap-12 overflow-y-auto max-h-[calc(100vh-320px)] custom-scrollbar">
             <AnimatePresence mode="popLayout">
               {items.map((item) => (
                 <SvgaCard 
-                  key={item.id} 
+                  key={`${item.id}-${selectedPresetId}`} 
                   item={item} 
                   onRemove={() => removeItem(item.id)} 
                   onMaximize={() => setSelectedItemId(item.id)}
                   onDownload={() => handleDownloadSingleImage(item)}
+                  onDownloadSvga={() => handleDownloadSvga(item)}
                   previewBg={previewBg}
                   watermark={watermark}
+                  selectedPreset={selectedPreset}
                 />
               ))}
             </AnimatePresence>
@@ -750,23 +921,97 @@ const InfoItem: React.FC<{ label: string; value: string | number }> = ({ label, 
 );
 
 const SvgaPlayer: React.FC<{ videoItem: any }> = ({ videoItem }) => {
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || !wrapperRef.current) return;
+    
+    // Clear container first
+    containerRef.current.innerHTML = '';
+    
     const player = new SVGA.Player(containerRef.current);
     playerRef.current = player;
+    
+    // We manually scale and center the container, so use Fill
+    player.setContentMode('Fill');
     player.setVideoItem(videoItem);
-    player.fillMode = 'AspectFit';
     player.startAnimation();
+
+    const updateCanvasStyles = () => {
+      if (!wrapperRef.current || !containerRef.current) return;
+      
+      const wrapperWidth = wrapperRef.current.clientWidth;
+      const wrapperHeight = wrapperRef.current.clientHeight;
+      const svgaWidth = videoItem.videoSize?.width || 1;
+      const svgaHeight = videoItem.videoSize?.height || 1;
+
+      // Fixed container dimensions as requested
+      const containerWidth = 1334;
+      const containerHeight = 750;
+
+      // 1. Scale the SVGA to fit inside the fixed 1334x750 container
+      const svgaScale = Math.min(containerWidth / svgaWidth, containerHeight / svgaHeight);
+      const finalSvgaWidth = svgaWidth * svgaScale;
+      const finalSvgaHeight = svgaHeight * svgaScale;
+
+      // 2. Scale the fixed 1334x750 container to fit inside the screen wrapper
+      const wrapperScale = Math.min(wrapperWidth / containerWidth, wrapperHeight / containerHeight);
+
+      // Size the inner container to exactly match the scaled SVGA dimensions
+      // and scale it down to fit the wrapper
+      Object.assign(containerRef.current.style, {
+        width: `${finalSvgaWidth}px`,
+        height: `${finalSvgaHeight}px`,
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: `translate(-50%, -50%) scale(${wrapperScale})`,
+        transformOrigin: 'center center',
+        zIndex: '1'
+      });
+
+      const canvas = containerRef.current.querySelector('canvas');
+      if (canvas) {
+        Object.assign(canvas.style, {
+          width: '100%',
+          height: '100%',
+          display: 'block',
+          objectFit: 'fill'
+        });
+      }
+    };
+
+    const resizeObserver = new ResizeObserver(() => {
+      updateCanvasStyles();
+    });
+
+    resizeObserver.observe(wrapperRef.current);
+
+    const mutationObserver = new MutationObserver(() => {
+      updateCanvasStyles();
+    });
+    
+    mutationObserver.observe(containerRef.current, { childList: true, subtree: true });
+
+    updateCanvasStyles();
+    const timer = setTimeout(updateCanvasStyles, 100);
+
     return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      clearTimeout(timer);
       player.stopAnimation();
       player.clear();
     };
   }, [videoItem]);
 
-  return <div ref={containerRef} className="w-full h-full flex items-center justify-center" />;
+  return (
+    <div ref={wrapperRef} className="w-full h-full relative overflow-hidden flex items-center justify-center">
+      <div ref={containerRef} className="relative" />
+    </div>
+  );
 };
 
 const SvgaCard: React.FC<{ 
@@ -774,23 +1019,34 @@ const SvgaCard: React.FC<{
   onRemove: () => void; 
   onMaximize: () => void;
   onDownload: () => void;
+  onDownloadSvga: () => void;
   previewBg: string | null;
   watermark: string | null;
-}> = ({ item, onRemove, onMaximize, onDownload, previewBg, watermark }) => {
+  selectedPreset?: DevicePreset;
+}> = ({ item, onRemove, onMaximize, onDownload, onDownloadSvga, previewBg, watermark, selectedPreset }) => {
+  const wrapperRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const [isPlaying, setIsPlaying] = useState(true);
   const [showInfo, setShowInfo] = useState(false);
-
+  const [zoom, setZoom] = useState(1);
   const isPortrait = item.dimensions.height > item.dimensions.width;
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || !item.videoItem) return;
+    
+    // Clear container first to avoid multiple canvases
+    containerRef.current.innerHTML = '';
     
     const player = new SVGA.Player(containerRef.current);
     playerRef.current = player;
+    
+    player.loops = 0;
+    player.clearsAfterStop = false;
+    
+    // Always use Fill since we are perfectly sizing the container
+    player.setContentMode('Fill');
     player.setVideoItem(item.videoItem);
-    player.setContentMode('AspectFill');
 
     const observer = new IntersectionObserver((entries) => {
       entries.forEach(entry => {
@@ -810,6 +1066,80 @@ const SvgaCard: React.FC<{
       player.clear();
     };
   }, [item.videoItem, isPlaying]);
+
+    // Separate effect for Zoom and Preset style updates - much faster and smoother
+    useEffect(() => {
+      const updateCanvasStyles = () => {
+        if (!wrapperRef.current || !containerRef.current) return;
+        
+        const wrapperWidth = wrapperRef.current.clientWidth;
+        const wrapperHeight = wrapperRef.current.clientHeight;
+        const svgaWidth = item.dimensions.width || 1;
+        const svgaHeight = item.dimensions.height || 1;
+  
+        // Fixed container dimensions as requested
+        const containerWidth = 1334;
+        const containerHeight = 750;
+  
+        // 1. Scale the SVGA to fit inside the fixed 1334x750 container
+        const svgaScale = Math.min(containerWidth / svgaWidth, containerHeight / svgaHeight);
+        const finalSvgaWidth = svgaWidth * svgaScale;
+        const finalSvgaHeight = svgaHeight * svgaScale;
+  
+        // 2. Scale the fixed 1334x750 container to fit inside the card wrapper
+        const wrapperScale = Math.min(wrapperWidth / containerWidth, wrapperHeight / containerHeight);
+  
+        // Size the inner container to exactly match the scaled SVGA dimensions
+        // and scale it down to fit the wrapper
+        Object.assign(containerRef.current.style, {
+          width: `${finalSvgaWidth}px`,
+          height: `${finalSvgaHeight}px`,
+          position: 'absolute',
+          top: '50%',
+          left: '50%',
+          // Combine the wrapper scale and the user zoom
+          transform: `translate(-50%, -50%) scale(${wrapperScale * zoom})`,
+          transformOrigin: 'center center',
+          zIndex: '1'
+        });
+  
+        const canvas = containerRef.current.querySelector('canvas');
+        if (canvas) {
+          Object.assign(canvas.style, {
+            width: '100%',
+            height: '100%',
+            display: 'block',
+            objectFit: 'fill'
+          });
+        }
+      };
+  
+      const resizeObserver = new ResizeObserver(() => {
+        updateCanvasStyles();
+      });
+  
+      if (wrapperRef.current) {
+        resizeObserver.observe(wrapperRef.current);
+      }
+  
+      // Use MutationObserver to catch when SVGA.Player adds the canvas
+      const mutationObserver = new MutationObserver(() => {
+        updateCanvasStyles();
+      });
+      
+      if (containerRef.current) {
+        mutationObserver.observe(containerRef.current, { childList: true, subtree: true });
+      }
+  
+      updateCanvasStyles();
+      const timer = setTimeout(updateCanvasStyles, 100);
+      
+      return () => {
+        resizeObserver.disconnect();
+        mutationObserver.disconnect();
+        clearTimeout(timer);
+      };
+    }, [selectedPreset, zoom, item.dimensions]);
 
   const togglePlay = () => {
     if (isPlaying) {
@@ -832,16 +1162,14 @@ const SvgaCard: React.FC<{
       initial={{ opacity: 0, scale: 0.9, y: 20 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
       exit={{ opacity: 0, scale: 0.9, y: 20 }}
-      className={`group relative bg-white/5 rounded-[2.5rem] border border-white/10 overflow-hidden hover:border-indigo-500/50 transition-all duration-500 hover:shadow-2xl hover:shadow-indigo-500/10 flex flex-col
-        ${isPortrait ? 'row-span-2' : ''}
-      `}
+      className={`group relative bg-white/5 rounded-[3rem] border border-white/10 overflow-hidden hover:border-indigo-500/50 transition-all duration-500 hover:shadow-2xl hover:shadow-indigo-500/10 flex flex-col shrink-0 ${selectedPreset ? 'w-[350px]' : 'w-[400px]'}`}
     >
-      {/* Preview Area */}
+      {/* Preview Area - Forced Ratio */}
       <div 
-        className={`relative bg-slate-950/50 flex items-center justify-center p-4 overflow-hidden flex-1
-          ${isPortrait ? 'aspect-[9/16]' : 'aspect-square'}
-        `}
+        ref={wrapperRef}
+        className={`relative bg-slate-950/50 flex items-center justify-center overflow-hidden w-full`}
         style={{
+          height: selectedPreset ? `${(selectedPreset.height / selectedPreset.width) * 350}px` : `${(750 / 1334) * 400}px`,
           backgroundImage: previewBg ? `url(${previewBg})` : 'none',
           backgroundSize: 'cover',
           backgroundPosition: 'center'
@@ -849,7 +1177,7 @@ const SvgaCard: React.FC<{
       >
         <div 
           ref={containerRef} 
-          className="w-full h-full flex items-center justify-center"
+          className="relative"
         />
 
         {/* Watermark */}
@@ -861,20 +1189,54 @@ const SvgaCard: React.FC<{
           />
         )}
         
+        {/* Info Badge */}
+        <div className="absolute bottom-4 left-4 flex flex-col gap-1 z-20">
+          <div className="px-3 py-1.5 bg-black/60 backdrop-blur-md border border-white/10 rounded-xl flex items-center gap-2">
+            <span className="text-[10px] font-black text-white">
+              {selectedPreset ? `${selectedPreset.width} × ${selectedPreset.height}` : `${item.dimensions.width} × ${item.dimensions.height}`}
+            </span>
+            {isPortrait ? <Smartphone className="w-3 h-3 text-sky-400" /> : <Monitor className="w-3 h-3 text-indigo-400" />}
+          </div>
+          {selectedPreset && (
+            <div className="px-2 py-0.5 bg-indigo-500/20 border border-indigo-500/30 rounded-lg text-[8px] font-black text-indigo-300 uppercase tracking-tighter text-center">
+              مقاس إجباري (Fill)
+            </div>
+          )}
+        </div>
+        
         {/* Overlay Controls */}
-        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex items-center justify-center gap-4 z-20">
-          <button 
-            onClick={togglePlay}
-            className="w-12 h-12 bg-white text-black rounded-full flex items-center justify-center hover:scale-110 transition-transform"
-          >
-            {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-1" />}
-          </button>
-          <button 
-            onClick={replay}
-            className="w-12 h-12 bg-white/20 backdrop-blur-md text-white rounded-full flex items-center justify-center hover:scale-110 transition-transform"
-          >
-            <RotateCcw className="w-6 h-6" />
-          </button>
+        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity duration-300 flex flex-col items-center justify-center gap-6 z-20">
+          <div className="flex items-center gap-4">
+            <button 
+              onClick={togglePlay}
+              className="w-12 h-12 bg-white text-black rounded-full flex items-center justify-center hover:scale-110 transition-transform"
+            >
+              {isPlaying ? <Pause className="w-6 h-6" /> : <Play className="w-6 h-6 ml-1" />}
+            </button>
+            <button 
+              onClick={replay}
+              className="w-12 h-12 bg-white/20 backdrop-blur-md text-white rounded-full flex items-center justify-center hover:scale-110 transition-transform"
+            >
+              <RotateCcw className="w-6 h-6" />
+            </button>
+          </div>
+
+          {/* Zoom Slider */}
+          <div className="w-48 px-4 py-3 bg-black/60 backdrop-blur-md rounded-2xl border border-white/10 flex flex-col gap-2">
+            <div className="flex justify-between items-center">
+              <span className="text-[10px] font-black text-white uppercase tracking-widest">تكبير العرض (Zoom)</span>
+              <span className="text-[10px] font-black text-indigo-400">{Math.round(zoom * 100)}%</span>
+            </div>
+            <input 
+              type="range" 
+              min="0.5" 
+              max="3" 
+              step="0.1" 
+              value={zoom} 
+              onChange={(e) => setZoom(parseFloat(e.target.value))}
+              className="w-full h-1.5 bg-white/10 rounded-lg appearance-none cursor-pointer accent-indigo-500"
+            />
+          </div>
         </div>
 
         {/* Top Right Actions */}
@@ -899,21 +1261,18 @@ const SvgaCard: React.FC<{
             <Camera className="w-5 h-5" />
           </button>
           <button 
+            onClick={onDownloadSvga}
+            className="w-10 h-10 bg-blue-500/20 backdrop-blur-md text-blue-400 rounded-xl flex items-center justify-center hover:bg-blue-500 hover:text-white transition-all"
+            title="تنزيل ملف SVGA"
+          >
+            <Download className="w-5 h-5" />
+          </button>
+          <button 
             onClick={() => setShowInfo(!showInfo)}
             className={`w-10 h-10 backdrop-blur-md rounded-xl flex items-center justify-center transition-all ${showInfo ? 'bg-indigo-500 text-white' : 'bg-white/10 text-white hover:bg-white/20'}`}
           >
             <Info className="w-5 h-5" />
           </button>
-        </div>
-
-        {/* Dimension Badge */}
-        <div className="absolute bottom-4 left-4 flex items-center gap-2 z-20">
-          <div className="px-3 py-1 bg-black/60 backdrop-blur-md rounded-lg border border-white/10 flex items-center gap-2">
-            {isPortrait ? <Smartphone className="w-3 h-3 text-sky-400" /> : <Monitor className="w-3 h-3 text-indigo-400" />}
-            <span className="text-[10px] font-black text-white tracking-widest uppercase">
-              {item.dimensions.width} × {item.dimensions.height}
-            </span>
-          </div>
         </div>
       </div>
 

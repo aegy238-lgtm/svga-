@@ -212,8 +212,8 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
   const audioInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
 
-  const videoWidth = customDimensions?.width || metadata.dimensions?.width || 750;
-  const videoHeight = customDimensions?.height || metadata.dimensions?.height || 1334;
+  const videoWidth = 1334;
+  const videoHeight = 750;
   const cost = settings?.costs.svgaProcess || 5;
 
   // ... (existing effects)
@@ -422,10 +422,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
                   }
                   
                   const frames = [];
+                  const x = (videoWidth - frameWidth) / 2;
+                  const y = (videoHeight - frameHeight) / 2;
                   for (let f = 0; f < totalFrames; f++) {
                       frames.push({
                           alpha: f === i ? 1.0 : 0.0,
-                          layout: { x: 0, y: 0, width: canvas.width, height: canvas.height },
+                          layout: { x, y, width: frameWidth, height: frameHeight },
                           transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
                       });
                   }
@@ -881,9 +883,46 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
       playerRef.current.innerHTML = '';
       player = new SVGA.Player(playerRef.current);
       player.loops = 0; player.clearsAfterStop = false;
-      player.setContentMode('AspectFit'); 
+      
+      // We manually scale and center the container, so use Fill
+      player.setContentMode('Fill'); 
       player.setVideoItem(metadata.videoItem);
       
+      // Calculate "contain" scale to fit perfectly inside the 1334x750 workspace
+      const svgaWidth = metadata.dimensions?.width || 1;
+      const svgaHeight = metadata.dimensions?.height || 1;
+      const scale = Math.min(videoWidth / svgaWidth, videoHeight / svgaHeight);
+      
+      const finalWidth = svgaWidth * scale;
+      const finalHeight = svgaHeight * scale;
+
+      // Size the inner container to exactly match the scaled SVGA dimensions
+      Object.assign(playerRef.current.style, {
+        width: `${finalWidth}px`,
+        height: `${finalHeight}px`,
+        position: 'absolute',
+        top: '50%',
+        left: '50%',
+        transform: `translate(-50%, -50%)`,
+        transformOrigin: 'center center'
+      });
+
+      // Override any inline styles SVGA.Player might set on the canvas
+      const updateCanvas = () => {
+        const canvas = playerRef.current?.querySelector('canvas');
+        if (canvas) {
+          Object.assign(canvas.style, {
+            width: '100%',
+            height: '100%',
+            display: 'block',
+            objectFit: 'fill'
+          });
+        }
+      };
+
+      updateCanvas();
+      const timer = setTimeout(updateCanvas, 100);
+
       // Restore frame if we were playing/paused at a specific frame
       if (currentFrame > 0) {
           player.stepToFrame(currentFrame, true);
@@ -893,9 +932,12 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
       setIsPlaying(true);
       player.onFrame((frame: number) => setCurrentFrame(frame));
       setSvgaInstance(player);
-      return () => { if (player) { player.stopAnimation(); player.clear(); } };
+      return () => { 
+        clearTimeout(timer);
+        if (player) { player.stopAnimation(); player.clear(); } 
+      };
     }
-  }, [metadata.videoItem, videoWidth, videoHeight]);
+  }, [metadata.videoItem, videoWidth, videoHeight, metadata.dimensions]);
 
   const handleOpenFadeModal = (key: string) => {
     setFadeModalTarget(key);
@@ -2798,7 +2840,7 @@ if (!this.JSON) { this.JSON = {}; }
         svgaInstance.pauseAnimation();
         const originalFrame = currentFrame;
         const totalFrames = metadata.frames || 0;
-        const fps = metadata.fps || 30;
+        const fps = Math.round(parseFloat(metadata.fps as any)) || 30;
         const canvas = playerRef.current.querySelector('canvas');
         if (!canvas) throw new Error("Canvas not found");
 
@@ -2890,7 +2932,7 @@ if (!this.JSON) { this.JSON = {}; }
         svgaInstance.pauseAnimation();
         const originalFrame = currentFrame;
         const totalFrames = metadata.frames || 0;
-        const fps = metadata.fps || 30;
+        const fps = Math.round(parseFloat(metadata.fps as any)) || 30;
         
         // Use video dimensions for consistency
         const safeWidth = videoWidth;
@@ -3096,7 +3138,7 @@ if (!this.JSON) { this.JSON = {}; }
         svgaInstance.pauseAnimation();
         const originalFrame = currentFrame;
         const totalFrames = metadata.frames || 0;
-        const fps = metadata.fps || 30;
+        const fps = Math.round(parseFloat(metadata.fps as any)) || 30;
         
         const safeWidth = videoWidth;
         const safeHeight = videoHeight;
@@ -3306,7 +3348,7 @@ if (!this.JSON) { this.JSON = {}; }
         svgaInstance.pauseAnimation();
         const originalFrame = currentFrame;
         const totalFrames = metadata.frames || 0;
-        const fps = metadata.fps || 30;
+        const fps = Math.round(parseFloat(metadata.fps as any)) || 30;
         const canvas = playerRef.current.querySelector('canvas');
         if (!canvas) throw new Error("Canvas not found");
 
@@ -3486,7 +3528,7 @@ if (!this.JSON) { this.JSON = {}; }
         svgaInstance.pauseAnimation();
         const originalFrame = currentFrame;
         const totalFrames = metadata.frames || 0;
-        const fps = metadata.fps || 30;
+        const fps = Math.round(parseFloat(metadata.fps as any)) || 30;
         
         if (totalFrames === 0) {
             alert("لا يمكن تسجيل الفيديو: عدد الإطارات غير صالح (0)");
@@ -3568,8 +3610,8 @@ if (!this.JSON) { this.JSON = {}; }
 
                     const numberOfChannels = 2;
                     const sampleRate = audioBuffer.sampleRate;
-                    // Limit audio length to recordingDuration to prevent extra audio in export
-                    const maxSamples = Math.floor(recordingDuration * sampleRate);
+                    const durationToUse = recordingDuration > 0 ? recordingDuration : (totalFrames / fps);
+                    const maxSamples = Math.floor(durationToUse * sampleRate);
                     const length = Math.min(audioBuffer.length, maxSamples);
                     const planarBuffer = new Float32Array(length * numberOfChannels);
                     
@@ -3811,6 +3853,8 @@ if (!this.JSON) { this.JSON = {}; }
                 setMetadata(newMeta);
                 setCustomDimensions(null);
                 setCurrentFrame(0);
+                setSvgaPos({ x: 0, y: 0 });
+                setSvgaScale(1);
             }
             
         }, (err: Error) => {
@@ -3837,10 +3881,10 @@ if (!this.JSON) { this.JSON = {}; }
 
     try {
         const { message, imagesData } = await getProcessedSVGAData();
-        const width = message.params?.viewBoxWidth || metadata.dimensions?.width || 750;
-        const height = message.params?.viewBoxHeight || metadata.dimensions?.height || 750;
-        const fps = message.params?.fps || metadata.fps || 30;
-        const totalFrames = message.params?.frames || metadata.frames || 0;
+        const width = parseFloat(message.params?.viewBoxWidth as string) || parseFloat(metadata.dimensions?.width as any) || 750;
+        const height = parseFloat(message.params?.viewBoxHeight as string) || parseFloat(metadata.dimensions?.height as any) || 750;
+        const fps = Math.round(parseFloat(message.params?.fps as string) || parseFloat(metadata.fps as any)) || 30;
+        const totalFrames = Math.round(parseFloat(message.params?.frames as string) || parseFloat(metadata.frames as any)) || 0;
         
         // VAP Layout Calculation (Based on user request)
         const gap = 4;
@@ -4240,7 +4284,7 @@ if (!this.JSON) { this.JSON = {}; }
             svgaInstance.pauseAnimation();
             const originalFrame = currentFrame;
             // Use the actual FPS from the SVGA file if available to prevent frame mismatch/stuttering
-            const fps = metadata.fps || svgaInstance.videoItem?.FPS || 30;
+            const fps = Math.round(parseFloat(metadata.fps as any)) || Math.round(parseFloat(svgaInstance.videoItem?.FPS as any)) || 30;
             const originalTotalFrames = svgaInstance.videoItem?.frames || metadata.frames || 0;
             // Use recordingDuration if specified, otherwise fallback to original duration
             const totalFrames = Math.ceil(recordingDuration * fps) || originalTotalFrames;
@@ -5723,7 +5767,7 @@ if (!this.JSON) { this.JSON = {}; }
                                 <input 
                                     type="number" 
                                     value={videoHeight} 
-                                    onChange={(e) => setCustomDimensions(prev => ({ width: prev?.width || videoWidth, height: parseInt(e.target.value) || 1334 }))}
+                                    onChange={(e) => setCustomDimensions(prev => ({ width: prev?.width || videoWidth, height: parseInt(e.target.value) || 750 }))}
                                     className="w-full bg-slate-900 border border-white/10 rounded-xl px-3 py-2 text-white text-xs font-mono focus:border-sky-500 outline-none"
                                 />
                             </div>

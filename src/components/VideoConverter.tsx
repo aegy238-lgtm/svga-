@@ -330,8 +330,13 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
       await video.play();
       video.pause();
 
-      const vw = customWidth ? Number(customWidth) : Math.round(video.videoWidth * exportScale);
-      const vh = customHeight ? Number(customHeight) : Math.round(video.videoHeight * exportScale);
+      const parsedWidth = Number(customWidth);
+      const parsedHeight = Number(customHeight);
+      let vw = (customWidth && !isNaN(parsedWidth) && parsedWidth > 0) ? parsedWidth : Math.round(video.videoWidth * exportScale);
+      let vh = (customHeight && !isNaN(parsedHeight) && parsedHeight > 0) ? parsedHeight : Math.round(video.videoHeight * exportScale);
+      
+      vw = Math.max(2, vw);
+      vh = Math.max(2, vh);
       
       // Set video to start time
       video.currentTime = startTime;
@@ -414,12 +419,14 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
 
             const numberOfChannels = 2;
             const sampleRate = audioBuffer.sampleRate;
-            const length = audioBuffer.length;
+            const duration = totalFrames / fps;
+            const maxSamples = Math.floor(duration * sampleRate);
+            const length = Math.min(audioBuffer.length, maxSamples);
             const planarBuffer = new Float32Array(length * numberOfChannels);
             
             for (let c = 0; c < numberOfChannels; c++) {
                 const channelData = audioBuffer.numberOfChannels > c ? audioBuffer.getChannelData(c) : audioBuffer.getChannelData(0);
-                planarBuffer.set(channelData, c * length);
+                planarBuffer.set(channelData.subarray(0, length), c * length);
             }
 
             const chunkSize = sampleRate;
@@ -569,12 +576,14 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
 
             const numberOfChannels = 2;
             const sampleRate = audioBuffer.sampleRate;
-            const length = audioBuffer.length;
+            const duration = totalFrames / fps;
+            const maxSamples = Math.floor(duration * sampleRate);
+            const length = Math.min(audioBuffer.length, maxSamples);
             const planarBuffer = new Float32Array(length * numberOfChannels);
             
             for (let c = 0; c < numberOfChannels; c++) {
                 const channelData = audioBuffer.numberOfChannels > c ? audioBuffer.getChannelData(c) : audioBuffer.getChannelData(0);
-                planarBuffer.set(channelData, c * length);
+                planarBuffer.set(channelData.subarray(0, length), c * length);
             }
 
             const chunkSize = sampleRate;
@@ -980,13 +989,18 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
 
   const exportToVAP = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, audioData: Uint8Array | null, startTime: number) => {
     setPhase('جاري إنشاء فيديو VAP...');
+    
+    // Ensure even dimensions for MP4
+    const safeWidth = vw % 2 === 0 ? vw : vw - 1;
+    const safeHeight = vh % 2 === 0 ? vh : vh - 1;
+    
     const vapCanvas = document.createElement('canvas');
-    vapCanvas.width = vw * 2;
-    vapCanvas.height = vh;
+    vapCanvas.width = safeWidth * 2;
+    vapCanvas.height = safeHeight;
     const vCtx = vapCanvas.getContext('2d', { willReadFrequently: true });
     const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = vw;
-    tempCanvas.height = vh;
+    tempCanvas.width = safeWidth;
+    tempCanvas.height = safeHeight;
     const tCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
 
     // Audio Setup
@@ -1007,15 +1021,16 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
             };
 
             const numberOfChannels = 2;
-            const length = audioBuffer.length;
             const sampleRate = audioBuffer.sampleRate;
+            const maxSamples = Math.floor(duration * sampleRate);
+            const length = Math.min(audioBuffer.length, maxSamples);
             const planarBuffer = new Float32Array(length * numberOfChannels);
             
             for (let c = 0; c < numberOfChannels; c++) {
                 const channelData = audioBuffer.numberOfChannels > c 
                     ? audioBuffer.getChannelData(c) 
                     : audioBuffer.getChannelData(0);
-                planarBuffer.set(channelData, c * length);
+                planarBuffer.set(channelData.subarray(0, length), c * length);
             }
 
             const chunkSize = sampleRate;
@@ -1043,25 +1058,30 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         }
     }
 
-    const muxer = new WebMMuxer.Muxer({
-      target: new WebMMuxer.ArrayBufferTarget(),
-      video: { codec: 'V_VP9', width: vapCanvas.width, height: vapCanvas.height, frameRate: fps, alpha: false },
-      audio: audioTrack
+    const muxer = new Mp4Muxer.Muxer({
+      target: new Mp4Muxer.ArrayBufferTarget(),
+      video: { codec: 'avc', width: vapCanvas.width, height: vapCanvas.height },
+      audio: audioTrack ? {
+          codec: 'aac',
+          numberOfChannels: 2,
+          sampleRate: 48000
+      } : undefined,
+      fastStart: 'in-memory'
     });
 
     const videoEncoder = new VideoEncoder({
-      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
+      output: (chunk, meta) => muxer.addVideoChunk(chunk, meta as any),
       error: (e) => console.error(e)
     });
 
     if (audioTrack && audioDataChunks.length > 0) {
         audioEncoder = new AudioEncoder({
-            output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
+            output: (chunk, meta) => muxer.addAudioChunk(chunk, meta as any),
             error: (e) => console.error("AudioEncoder error:", e)
         });
 
         audioEncoder.configure({
-            codec: 'opus',
+            codec: 'mp4a.40.2',
             numberOfChannels: 2,
             sampleRate: 48000,
             bitrate: 128000
@@ -1075,11 +1095,11 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     }
 
         videoEncoder.configure({ 
-        codec: 'vp09.00.10.08', 
+        codec: 'avc1.42E01F', // H.264 Baseline Profile
         width: vapCanvas.width, 
         height: vapCanvas.height, 
         bitrate: customBitrate ? Number(customBitrate) * 1000000 : (globalQuality === 'high' ? 8000000 : globalQuality === 'medium' ? 4000000 : 1500000),
-        alpha: 'discard'
+        avc: { format: 'annexb' }
     });
 
     for (let i = 0; i < totalFrames; i++) {
@@ -1091,11 +1111,11 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
 
       if (vCtx && tCtx) {
         // Clear temp canvas
-        tCtx.clearRect(0, 0, vw, vh);
-        tCtx.drawImage(video, 0, 0, vw, vh);
+        tCtx.clearRect(0, 0, safeWidth, safeHeight);
+        tCtx.drawImage(video, 0, 0, safeWidth, safeHeight);
         
         // Apply transparency effects to the source before splitting
-        applyTransparencyEffects(tCtx, vw, vh);
+        applyTransparencyEffects(tCtx, safeWidth, safeHeight);
 
         // Prepare VAP Frame
         // IMPORTANT: Fill with black first to ensure no transparency issues
@@ -1103,10 +1123,10 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         vCtx.fillRect(0, 0, vapCanvas.width, vapCanvas.height);
 
         // Draw RGB side (Right)
-        vCtx.drawImage(tempCanvas, vw, 0, vw, vh); 
+        vCtx.drawImage(tempCanvas, safeWidth, 0, safeWidth, safeHeight); 
 
         // Create Alpha Mask
-        const imageData = tCtx.getImageData(0, 0, vw, vh);
+        const imageData = tCtx.getImageData(0, 0, safeWidth, safeHeight);
         const data = imageData.data;
         for (let j = 0; j < data.length; j += 4) {
           const alpha = data[j + 3];
@@ -1118,7 +1138,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         tCtx.putImageData(imageData, 0, 0);
         
         // Draw Alpha side (Left)
-        vCtx.drawImage(tempCanvas, 0, 0, vw, vh); 
+        vCtx.drawImage(tempCanvas, 0, 0, safeWidth, safeHeight); 
       }
 
       const bitmap = await createImageBitmap(vapCanvas);
