@@ -1,10 +1,11 @@
 import React, { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Layers, Play, Pause, RotateCcw, Trash2, Maximize2, Info, Upload, X, Download, Image as ImageIcon, ShieldCheck, Monitor, Smartphone, Loader2 } from 'lucide-react';
+import { Layers, Play, Pause, RotateCcw, Trash2, Maximize2, Info, Upload, X, Download, Image as ImageIcon, ShieldCheck, Monitor, Smartphone, Loader2, Camera } from 'lucide-react';
 import { db } from '../lib/firebase';
 import { collection, getDocs } from 'firebase/firestore';
 import { PresetBackground, UserRecord } from '../types';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
+import JSZip from 'jszip';
 
 declare var SVGA: any;
 
@@ -33,6 +34,7 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
   const [presetBgs, setPresetBgs] = useState<PresetBackground[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const [isExporting, setIsExporting] = useState(false);
+  const [isZipping, setIsZipping] = useState(false);
   const [exportProgress, setExportProgress] = useState(0);
   const [exportDuration, setExportDuration] = useState(10);
   
@@ -353,6 +355,106 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
     }
   };
 
+  const captureFrame = async (item: MultiSvgaItem, frameIndex: number = 0): Promise<Blob> => {
+    const canvas = document.createElement('canvas');
+    canvas.width = item.dimensions.width;
+    canvas.height = item.dimensions.height;
+    const ctx = canvas.getContext('2d', { alpha: true })!;
+
+    // Ensure transparency
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Render SVGA Frame
+    const div = document.createElement('div');
+    div.style.width = item.dimensions.width + 'px';
+    div.style.height = item.dimensions.height + 'px';
+    div.style.position = 'fixed';
+    div.style.top = '-9999px';
+    document.body.appendChild(div);
+
+    try {
+      const player = new SVGA.Player(div);
+      await new Promise<void>((resolve) => {
+        player.setVideoItem(item.videoItem);
+        player.stepToFrame(frameIndex, false);
+        // Small delay to ensure rendering
+        setTimeout(resolve, 100);
+      });
+      
+      const svgaCanvas = div.querySelector('canvas');
+      if (svgaCanvas) {
+        ctx.drawImage(svgaCanvas, 0, 0, canvas.width, canvas.height);
+      }
+    } finally {
+      document.body.removeChild(div);
+    }
+
+    // Draw Watermark
+    if (watermark) {
+      try {
+        const wmImg = await new Promise<HTMLImageElement>((resolve, reject) => {
+          const img = new Image();
+          img.crossOrigin = 'anonymous';
+          img.onload = () => resolve(img);
+          img.onerror = reject;
+          img.src = watermark;
+        });
+
+        ctx.globalAlpha = wmSettings.opacity;
+        const wmSize = Math.min(canvas.width, canvas.height) * (wmSettings.size / 100);
+        let wx = 0, wy = 0;
+        switch(wmSettings.position) {
+          case 'top-left': wx = 20; wy = 20; break;
+          case 'top-right': wx = canvas.width - wmSize - 20; wy = 20; break;
+          case 'bottom-left': wx = 20; wy = canvas.height - wmSize - 20; break;
+          case 'bottom-right': wx = canvas.width - wmSize - 20; wy = canvas.height - wmSize - 20; break;
+          case 'center': wx = (canvas.width - wmSize) / 2; wy = (canvas.height - wmSize) / 2; break;
+        }
+        ctx.drawImage(wmImg, wx, wy, wmSize, wmSize);
+        ctx.globalAlpha = 1.0;
+      } catch (e) {
+        console.error("Failed to load watermark for capture", e);
+      }
+    }
+
+    return new Promise((resolve) => canvas.toBlob(blob => resolve(blob!), 'image/png'));
+  };
+
+  const handleDownloadAllImages = async () => {
+    if (items.length === 0) return;
+    setIsZipping(true);
+    setExportProgress(0);
+    
+    const zip = new JSZip();
+    const folder = zip.folder("SVGA_Screenshots");
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const blob = await captureFrame(item, Math.floor(item.frames / 2)); // Capture middle frame
+      folder?.file(`${item.name.replace('.svga', '')}.png`, blob);
+      setExportProgress(Math.round(((i + 1) / items.length) * 100));
+    }
+
+    const content = await zip.generateAsync({ type: "blob" });
+    const url = URL.createObjectURL(content);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `SVGA_Images_${Date.now()}.zip`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setIsZipping(false);
+  };
+
+  const handleDownloadSingleImage = async (item: MultiSvgaItem) => {
+    const blob = await captureFrame(item, Math.floor(item.frames / 2));
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${item.name.replace('.svga', '')}.png`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   const selectedItem = useMemo(() => items.find(i => i.id === selectedItemId), [items, selectedItemId]);
 
   return (
@@ -395,6 +497,14 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
                   className="w-16 bg-transparent text-white font-black text-sm focus:outline-none text-center"
                 />
               </div>
+              <button 
+                onClick={handleDownloadAllImages}
+                disabled={isZipping || isExporting}
+                className="px-6 py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl shadow-lg shadow-emerald-600/20 font-black text-sm transition-all flex items-center gap-2 disabled:opacity-50"
+              >
+                {isZipping ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                {isZipping ? `جاري التحضير ${exportProgress}%` : 'تنزيل كل الصور (ZIP)'}
+              </button>
               <button 
                 onClick={handleExportGrid}
                 disabled={isExporting}
@@ -544,6 +654,7 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
                   item={item} 
                   onRemove={() => removeItem(item.id)} 
                   onMaximize={() => setSelectedItemId(item.id)}
+                  onDownload={() => handleDownloadSingleImage(item)}
                   previewBg={previewBg}
                   watermark={watermark}
                 />
@@ -662,9 +773,10 @@ const SvgaCard: React.FC<{
   item: MultiSvgaItem; 
   onRemove: () => void; 
   onMaximize: () => void;
+  onDownload: () => void;
   previewBg: string | null;
   watermark: string | null;
-}> = ({ item, onRemove, onMaximize, previewBg, watermark }) => {
+}> = ({ item, onRemove, onMaximize, onDownload, previewBg, watermark }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
   const [isPlaying, setIsPlaying] = useState(true);
@@ -778,6 +890,13 @@ const SvgaCard: React.FC<{
             className="w-10 h-10 bg-indigo-500/20 backdrop-blur-md text-indigo-400 rounded-xl flex items-center justify-center hover:bg-indigo-500 hover:text-white transition-all"
           >
             <Maximize2 className="w-5 h-5" />
+          </button>
+          <button 
+            onClick={onDownload}
+            className="w-10 h-10 bg-emerald-500/20 backdrop-blur-md text-emerald-400 rounded-xl flex items-center justify-center hover:bg-emerald-500 hover:text-white transition-all"
+            title="تنزيل صورة"
+          >
+            <Camera className="w-5 h-5" />
           </button>
           <button 
             onClick={() => setShowInfo(!showInfo)}
