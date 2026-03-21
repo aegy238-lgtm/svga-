@@ -4,6 +4,7 @@ import { Uploader } from './components/Uploader';
 import { Workspace } from './components/Workspace';
 import { BatchCompressor } from './components/BatchCompressor';
 import { BatchCropper } from './components/BatchCropper';
+import { BatchSvgaConverter } from './components/BatchSvgaConverter';
 import { VideoConverter } from './components/VideoConverter';
 import { MultiSvgaViewer } from './components/MultiSvgaViewer';
 import { ImageToSvga } from './components/ImageToSvga';
@@ -37,6 +38,7 @@ const App: React.FC = () => {
   const { checkAccess } = useAccessControl();
   const [state, setState] = useState<AppState>(AppState.IDLE);
   const [fileMetadata, setFileMetadata] = useState<FileMetadata | null>(null);
+  const [batchFiles, setBatchFiles] = useState<File[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(() => {
     const cached = localStorage.getItem('appSettings');
     return cached ? JSON.parse(cached) : null;
@@ -84,7 +86,19 @@ const App: React.FC = () => {
     setState(targetState);
   };
 
-  const handleFileUpload = useCallback(async (file: File) => {
+  const handleFileUpload = useCallback(async (files: File[]) => {
+    if (files.length === 0) return;
+
+    if (files.length > 1) {
+      const svgaFiles = files.filter(f => f.name.toLowerCase().endsWith('.svga'));
+      if (svgaFiles.length > 0) {
+        setBatchFiles(svgaFiles);
+        setState(AppState.BATCH_SVGA_CONVERTER);
+        return;
+      }
+    }
+
+    const file = files[0];
     // Allow upload without login
     const fileUrl = URL.createObjectURL(file);
 
@@ -251,6 +265,7 @@ const App: React.FC = () => {
     }
     setState(AppState.IDLE);
     setFileMetadata(null);
+    setBatchFiles([]);
   }, [fileMetadata]);
 
   if (loading) {
@@ -289,6 +304,7 @@ const App: React.FC = () => {
         onImageEditorOpen={() => handleFeatureAccess(AppState.IMAGE_EDITOR, 'Image Editor')}
         onImageMatcherOpen={() => handleFeatureAccess(AppState.IMAGE_MATCHER, 'Image Matcher')}
         onCropperOpen={() => handleFeatureAccess(AppState.BATCH_CROPPER, 'Batch Cropper')}
+        onBatchSvgaOpen={() => handleFeatureAccess(AppState.BATCH_SVGA_CONVERTER, 'Batch SVGA Converter')}
         onSvgaExOpen={() => handleFeatureAccess(AppState.SVGA_EDITOR_EX, 'SVGA Editor EX')}
         onMultiSvgaOpen={() => handleFeatureAccess(AppState.MULTI_SVGA_VIEWER, 'Multi SVGA Preview')}
         onImageProcessorOpen={() => handleFeatureAccess(AppState.IMAGE_PROCESSOR, 'Image Processor')}
@@ -303,6 +319,7 @@ const App: React.FC = () => {
           state === AppState.IMAGE_EDITOR ? 'image-editor' :
           state === AppState.IMAGE_MATCHER ? 'image-matcher' :
           state === AppState.BATCH_CROPPER ? 'cropper' :
+          state === AppState.BATCH_SVGA_CONVERTER ? 'batch-svga' :
           state === AppState.SVGA_EDITOR_EX ? 'svga-ex' :
           state === AppState.MULTI_SVGA_VIEWER ? 'multi-svga' :
           'svga'
@@ -395,6 +412,16 @@ const App: React.FC = () => {
                 onCancel={handleReset} 
                 onLoginRequired={() => {}}
                 onSubscriptionRequired={() => {}}
+              />
+            )}
+            {state === AppState.BATCH_SVGA_CONVERTER && (
+              <BatchSvgaConverter 
+                currentUser={currentUser} 
+                settings={settings}
+                onCancel={handleReset} 
+                onLoginRequired={() => {}}
+                onSubscriptionRequired={() => {}}
+                initialFiles={batchFiles}
               />
             )}
             {state === AppState.MULTI_SVGA_VIEWER && (

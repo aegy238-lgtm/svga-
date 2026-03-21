@@ -4290,8 +4290,11 @@ if (!this.JSON) { this.JSON = {}; }
             const totalFrames = Math.ceil(recordingDuration * fps) || originalTotalFrames;
             
             // Ensure even dimensions for video encoding
-            const safeWidth = videoWidth % 2 === 0 ? videoWidth : videoWidth - 1;
-            const safeHeight = videoHeight % 2 === 0 ? videoHeight : videoHeight - 1;
+            let safeWidth = Math.floor((videoWidth || 1334) / 2) * 2;
+            let safeHeight = Math.floor((videoHeight || 750) / 2) * 2;
+            
+            if (isNaN(safeWidth) || safeWidth <= 0) safeWidth = 1334;
+            if (isNaN(safeHeight) || safeHeight <= 0) safeHeight = 750;
             
             // VAP Canvas (2x Width)
             const vapWidth = safeWidth * 2;
@@ -4469,21 +4472,27 @@ if (!this.JSON) { this.JSON = {}; }
             if (globalQuality === 'low') bitrate = 5000000; // 5 Mbps (Minimum safe for smooth playback)
 
             // 2. Codec Config: Use H.264 (AVC) with specific profile for mobile compatibility
+            // Use High Profile Level 5.1 (avc1.640033) for better resolution support (up to 4K)
             const videoConfig: VideoEncoderConfig = {
-                codec: 'avc1.4d0028', // Main Profile Level 4.0 (Widely supported, good quality)
+                codec: 'avc1.640033', 
                 width: vapWidth,
                 height: vapHeight,
                 bitrate: bitrate,
                 framerate: fps,
-                latencyMode: 'quality', // Prioritize quality/smoothness over encoding speed
+                latencyMode: 'quality',
                 avc: { format: 'avc' }
             };
 
             // Check support and fallback if needed
             const support = await VideoEncoder.isConfigSupported(videoConfig);
             if (!support.supported) {
-                console.warn("H.264 Main Profile not supported, falling back to Baseline");
-                videoConfig.codec = 'avc1.42001E'; // Baseline
+                console.warn("H.264 High Profile 5.1 not supported, falling back to Main Profile 4.0");
+                videoConfig.codec = 'avc1.4d0028'; 
+                const support2 = await VideoEncoder.isConfigSupported(videoConfig);
+                if (!support2.supported) {
+                    console.warn("H.264 Main Profile 4.0 not supported, falling back to Baseline");
+                    videoConfig.codec = 'avc1.42001E';
+                }
             }
 
             videoEncoder.configure(videoConfig);

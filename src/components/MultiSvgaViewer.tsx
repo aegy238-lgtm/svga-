@@ -206,20 +206,22 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
       let canvasHeight: number;
       let cols: number;
       let rows: number;
-      let cardSize: number;
+      let cardW: number;
+      let cardH: number;
       const padding = items.length > 1 ? 40 : 0;
 
       if (items.length === 1) {
         cols = 1;
         rows = 1;
-        canvasWidth = selectedPreset ? selectedPreset.width : items[0].dimensions.width;
-        canvasHeight = selectedPreset ? selectedPreset.height : items[0].dimensions.height;
-        cardSize = canvasWidth;
+        cardW = selectedPreset ? selectedPreset.width : items[0].dimensions.width;
+        cardH = selectedPreset ? selectedPreset.height : items[0].dimensions.height;
+        canvasWidth = cardW;
+        canvasHeight = cardH;
       } else {
         cols = items.length <= 2 ? items.length : items.length <= 4 ? 2 : 3;
         rows = Math.ceil(items.length / cols);
-        const cardW = selectedPreset ? selectedPreset.width : 1334;
-        const cardH = selectedPreset ? selectedPreset.height : 750;
+        cardW = selectedPreset ? selectedPreset.width : 1334;
+        cardH = selectedPreset ? selectedPreset.height : 750;
         canvasWidth = cols * cardW + (cols + 1) * padding;
         canvasHeight = rows * cardH + (rows + 1) * padding;
       }
@@ -229,15 +231,10 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
       const currentPixels = canvasWidth * canvasHeight;
       if (currentPixels > maxPixels) {
         const scale = Math.sqrt(maxPixels / currentPixels);
-        if (items.length === 1) {
-          canvasWidth = Math.floor(canvasWidth * scale);
-          canvasHeight = Math.floor(canvasHeight * scale);
-          cardSize = Math.max(canvasWidth, canvasHeight);
-        } else {
-          cardSize = Math.floor(cardSize * scale);
-          canvasWidth = cols * cardSize + (cols + 1) * padding;
-          canvasHeight = rows * cardSize + (rows + 1) * padding;
-        }
+        cardW = Math.floor(cardW * scale);
+        cardH = Math.floor(cardH * scale);
+        canvasWidth = cols * cardW + (cols + 1) * padding;
+        canvasHeight = rows * cardH + (rows + 1) * padding;
       }
 
       // Dimensions must be even for many encoders
@@ -299,12 +296,12 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
       });
 
       const offscreenPlayers = items.map(item => {
-        const cardW = selectedPreset ? selectedPreset.width : item.dimensions.width;
-        const cardH = selectedPreset ? selectedPreset.height : item.dimensions.height;
+        const w = items.length === 1 ? (selectedPreset ? selectedPreset.width : item.dimensions.width) : cardW;
+        const h = items.length === 1 ? (selectedPreset ? selectedPreset.height : item.dimensions.height) : cardH;
         
         const div = document.createElement('div');
-        div.style.width = cardW + 'px';
-        div.style.height = cardH + 'px';
+        div.style.width = w + 'px';
+        div.style.height = h + 'px';
         div.style.position = 'absolute';
         div.style.left = '0';
         div.style.top = '0';
@@ -313,7 +310,10 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
         const player = new SVGA.Player(div);
         player.setVideoItem(item.videoItem);
         player.setContentMode(selectedPreset ? 'AspectFill' : 'AspectFit');
-        return { player, div, item, cardW, cardH };
+        
+        // Cache the canvas reference
+        const internalCanvas = div.querySelector('canvas');
+        return { player, div, item, cardW, cardH, internalCanvas };
       });
 
       // Wait for initialization and warmup
@@ -328,7 +328,7 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
           ctx.fillRect(0, 0, canvasWidth, canvasHeight);
         }
 
-        offscreenPlayers.forEach(({ player, div, item, cardW, cardH }, index) => {
+        offscreenPlayers.forEach(({ player, item, cardW, cardH, internalCanvas }, index) => {
           let x, y;
           
           if (items.length === 1) {
@@ -350,7 +350,6 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
           const itemFrame = Math.floor(elapsedSeconds * item.fps) % item.frames;
           player.stepToFrame(itemFrame, false);
 
-          const internalCanvas = div.querySelector('canvas');
           if (internalCanvas) {
             const sw = item.dimensions.width;
             const sh = item.dimensions.height;
@@ -394,7 +393,11 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
         const videoFrame = new VideoFrame(canvas, { timestamp });
         videoEncoder.encode(videoFrame, { keyFrame: frame % 30 === 0 });
         videoFrame.close();
-        setExportProgress(Math.round((frame / totalFrames) * 100));
+        
+        // Throttled progress update
+        if (frame % 5 === 0) {
+          setExportProgress(Math.round((frame / totalFrames) * 100));
+        }
       }
 
       await videoEncoder.flush();

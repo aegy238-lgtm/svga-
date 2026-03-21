@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 
 interface UploaderProps {
-  onUpload: (file: File) => void;
+  onUpload: (files: File[]) => void;
   isUploading: boolean;
   onConverterOpen?: () => void;
   onMultiSvgaOpen?: () => void;
@@ -14,8 +14,8 @@ export const Uploader: React.FC<UploaderProps> = ({ onUpload, isUploading, onCon
   const [isDragOver, setIsDragOver] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      onUpload(e.target.files[0]);
+    if (e.target.files && e.target.files.length > 0) {
+      onUpload(Array.from(e.target.files));
     }
   };
 
@@ -31,8 +31,8 @@ export const Uploader: React.FC<UploaderProps> = ({ onUpload, isUploading, onCon
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      onUpload(e.dataTransfer.files[0]);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      onUpload(Array.from(e.dataTransfer.files));
     }
   };
 
@@ -52,6 +52,7 @@ export const Uploader: React.FC<UploaderProps> = ({ onUpload, isUploading, onCon
         accept=".svga,.mp4,.webm,.mov"
         className="hidden"
         onChange={handleFileChange}
+        multiple
       />
 
       <div className="absolute -top-24 -left-24 w-64 h-64 bg-sky-500/5 blur-[100px] rounded-full"></div>

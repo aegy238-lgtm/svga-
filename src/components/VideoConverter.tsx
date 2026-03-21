@@ -43,8 +43,11 @@ interface VideoConverterProps {
 
 export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onCancel, onLoginRequired, onSubscriptionRequired, globalQuality: initialGlobalQuality = 'high' }) => {
   const { checkAccess } = useAccessControl();
-  const [file, setFile] = useState<File | null>(null);
-  const [videoUrl, setVideoUrl] = useState<string | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
+  const [videoUrls, setVideoUrls] = useState<string[]>([]);
+  const [currentFileIndex, setCurrentFileIndex] = useState(0);
+  const [isMerging, setIsMerging] = useState(false);
+  const [generateChecksum, setGenerateChecksum] = useState(false);
   const [startTime, setStartTime] = useState(0);
   const [endTime, setEndTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -69,6 +72,15 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
   const [removeBlue, setRemoveBlue] = useState(false);
   const [fadeConfig, setFadeConfig] = useState({ top: 0, bottom: 0, left: 0, right: 0 });
   
+  const file = files[currentFileIndex] || null;
+  const videoUrl = videoUrls[currentFileIndex] || null;
+
+  useEffect(() => {
+    const urls = files.map(f => URL.createObjectURL(f));
+    setVideoUrls(urls);
+    return () => urls.forEach(url => URL.revokeObjectURL(url));
+  }, [files]);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const audioInputRef = useRef<HTMLInputElement>(null);
 
@@ -240,26 +252,27 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
   };
 
   useEffect(() => {
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setVideoUrl(url);
+    if (files.length > 0) {
+      const urls = files.map(f => URL.createObjectURL(f));
+      setVideoUrls(urls);
       
       const video = document.createElement('video');
-      video.src = url;
+      video.src = urls[currentFileIndex];
       video.onloadedmetadata = () => {
         setDuration(video.duration);
         setEndTime(video.duration);
       };
       
       return () => {
-        URL.revokeObjectURL(url);
-        setVideoUrl(null);
+        urls.forEach(url => URL.revokeObjectURL(url));
+        setVideoUrls([]);
       };
     }
-  }, [file]);
+  }, [files, currentFileIndex]);
 
   const extractAudio = async () => {
-    if (!file) return;
+    if (files.length === 0) return;
+    const currentFile = files[currentFileIndex];
     setIsProcessing(true);
     setPhase('جاري استخراج الصوت...');
     setProgress(0);
@@ -268,17 +281,15 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
       const ffmpeg = ffmpegRef.current;
       if (!ffmpeg) throw new Error("FFmpeg not loaded");
 
-      const uint8 = new Uint8Array(await file.arrayBuffer());
+      const uint8 = new Uint8Array(await currentFile.arrayBuffer());
       await ffmpeg.writeFile('input.mp4', uint8);
 
       // Instant extraction: use '-c:a copy' to extract the audio stream without re-encoding.
-      // This is much faster than 'libmp3lame' because it doesn't process the audio data.
-      // We use .m4a as it's the standard container for AAC/MP3 audio in MP4 files.
       await ffmpeg.exec(['-i', 'input.mp4', '-vn', '-c:a', 'copy', 'output.m4a']);
 
       const data = await ffmpeg.readFile('output.m4a');
       const blob = new Blob([data], { type: 'audio/mp4' });
-      downloadBlob(blob, `${file.name.replace('.mp4', '')}.m4a`);
+      downloadBlob(blob, `${currentFile.name.replace('.mp4', '')}.m4a`);
       
       setPhase('تم استخراج الصوت فوراً!');
       setProgress(100);
@@ -290,7 +301,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         await ffmpeg.exec(['-i', 'input.mp4', '-vn', '-acodec', 'libmp3lame', '-q:a', '4', 'output.mp3']);
         const data = await ffmpeg.readFile('output.mp3');
         const blob = new Blob([data], { type: 'audio/mpeg' });
-        downloadBlob(blob, `${file.name.replace('.mp4', '')}.mp3`);
+        downloadBlob(blob, `${files[currentFileIndex].name.replace('.mp4', '')}.mp3`);
         setPhase('تم استخراج الصوت بنجاح!');
         setProgress(100);
       } catch (err) {
@@ -303,7 +314,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
   };
 
   const handleConvert = async () => {
-    if (!file) return;
+    if (files.length === 0) return;
     const format = formats.find(f => f.id === selectedFormat);
     if (!format) return;
 
@@ -319,64 +330,24 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     }
 
     setIsProcessing(true);
-    setPhase('جاري تحليل الفيديو...');
     setProgress(0);
 
     try {
-      const video = document.createElement('video');
-      video.src = URL.createObjectURL(file);
-      video.muted = true;
-      video.playsInline = true;
-      await video.play();
-      video.pause();
-
-      const parsedWidth = Number(customWidth);
-      const parsedHeight = Number(customHeight);
-      let vw = (customWidth && !isNaN(parsedWidth) && parsedWidth > 0) ? parsedWidth : Math.round(video.videoWidth * exportScale);
-      let vh = (customHeight && !isNaN(parsedHeight) && parsedHeight > 0) ? parsedHeight : Math.round(video.videoHeight * exportScale);
-      
-      vw = Math.max(2, vw);
-      vh = Math.max(2, vh);
-      
-      // Set video to start time
-      video.currentTime = startTime;
-      await new Promise(r => {
-        const onSeek = () => { video.removeEventListener('seeked', onSeek); r(null); };
-        video.addEventListener('seeked', onSeek);
-      });
-
-      const duration = endTime - startTime;
-      const totalFrames = Math.floor(duration * fps);
-
-      // Handle Audio if provided
-      let audioData: Uint8Array | null = null;
-      if (audioFile) {
-        const arrayBuffer = await audioFile.arrayBuffer();
-        audioData = new Uint8Array(arrayBuffer);
-      }
-
-      if (selectedFormat === 'MP4 (Standard)') {
-        await exportToMP4Standard(video, vw, vh, totalFrames, fps, audioData, startTime);
-      } else if (selectedFormat === 'VAP (MP4)') {
-        await exportToVAP(video, vw, vh, totalFrames, fps, audioData, startTime);
-      } else if (selectedFormat === 'VAP 1.0.5') {
-        await exportToVAP105(video, vw, vh, totalFrames, fps, audioData, startTime);
-      } else if (selectedFormat === 'SVGA 2.0') {
-        await exportToSVGA(video, vw, vh, totalFrames, fps, audioData, startTime, endTime);
-      } else if (selectedFormat === 'GIF (Animation)') {
-        await exportToGIF(video, vw, vh, totalFrames, fps, startTime);
-      } else if (selectedFormat === 'APNG (Animation)') {
-        await exportToAPNG(video, vw, vh, totalFrames, fps, startTime);
-      } else if (selectedFormat === 'WebP (Animated)') {
-        await exportToWebP(video, vw, vh, totalFrames, fps, startTime);
-      } else if (selectedFormat === 'WebM (Video)') {
-        await exportToWebM(video, vw, vh, totalFrames, fps, startTime);
+      if (isMerging && files.length > 1) {
+        await processMerge();
+      } else {
+        // Batch processing
+        for (let i = 0; i < files.length; i++) {
+          setCurrentFileIndex(i);
+          setPhase(`جاري معالجة الملف ${i + 1} من ${files.length}...`);
+          await processSingleFile(files[i], i);
+        }
       }
 
       alert("تم التحويل بنجاح!");
       
       if (currentUser) {
-        logActivity(currentUser, 'convert_video', `Converted video: ${file.name} to ${selectedFormat}`);
+        logActivity(currentUser, 'convert_video', `Converted ${files.length} videos to ${selectedFormat}`);
       }
 
       onCancel();
@@ -388,18 +359,224 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     }
   };
 
-  const calculateChecksum = async (buffer: ArrayBuffer): Promise<string> => {
-      const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  const processSingleFile = async (currentFile: File, index: number) => {
+    const video = document.createElement('video');
+    const objectUrl = URL.createObjectURL(currentFile);
+    video.src = objectUrl;
+    video.muted = true;
+    video.playsInline = true;
+    
+    try {
+      await new Promise((resolve, reject) => {
+        video.onloadedmetadata = () => resolve(null);
+        video.onerror = () => reject(new Error("فشل في تحميل بيانات الفيديو"));
+        setTimeout(() => reject(new Error("انتهت مهلة تحميل بيانات الفيديو")), 10000);
+      });
+
+      await video.play();
+      video.pause();
+
+      const parsedWidth = parseInt(customWidth as string);
+      const parsedHeight = parseInt(customHeight as string);
+      const validScale = isNaN(exportScale) ? 1.0 : exportScale;
+      
+      let vw = (customWidth && !isNaN(parsedWidth) && parsedWidth > 0) ? parsedWidth : Math.round((video.videoWidth || 1334) * validScale);
+      let vh = (customHeight && !isNaN(parsedHeight) && parsedHeight > 0) ? parsedHeight : Math.round((video.videoHeight || 750) * validScale);
+      
+      // Ensure integers and valid values
+      vw = Math.round(vw);
+      vh = Math.round(vh);
+      
+      if (isNaN(vw) || vw <= 0) vw = 1334;
+      if (isNaN(vh) || vh <= 0) vh = 750;
+      
+      vw = Math.max(2, vw);
+      vh = Math.max(2, vh);
+      
+      video.currentTime = startTime;
+      await new Promise(r => {
+        const onSeek = () => { video.removeEventListener('seeked', onSeek); r(null); };
+        video.addEventListener('seeked', onSeek);
+      });
+
+      const duration = isNaN(endTime) || isNaN(startTime) ? 0 : endTime - startTime;
+      const validFps = isNaN(fps) || fps <= 0 ? 30 : fps;
+      const totalFrames = Math.max(1, Math.floor(duration * validFps));
+
+      let audioData: Uint8Array | null = null;
+      if (audioFile) {
+        const arrayBuffer = await audioFile.arrayBuffer();
+        audioData = new Uint8Array(arrayBuffer);
+      }
+
+      if (selectedFormat === 'MP4 (Standard)') {
+        await exportToMP4Standard(video, vw, vh, totalFrames, fps, audioData, startTime, currentFile.name);
+      } else if (selectedFormat === 'VAP (MP4)') {
+        await exportToVAP(video, vw, vh, totalFrames, fps, audioData, startTime, currentFile.name);
+      } else if (selectedFormat === 'VAP 1.0.5') {
+        await exportToVAP105(video, vw, vh, totalFrames, fps, audioData, startTime, currentFile.name);
+      } else if (selectedFormat === 'SVGA 2.0') {
+        await exportToSVGA(video, vw, vh, totalFrames, fps, audioData, startTime, endTime, currentFile.name);
+      } else if (selectedFormat === 'GIF (Animation)') {
+        await exportToGIF(video, vw, vh, totalFrames, fps, startTime, currentFile.name);
+      } else if (selectedFormat === 'APNG (Animation)') {
+        await exportToAPNG(video, vw, vh, totalFrames, fps, startTime, currentFile.name);
+      } else if (selectedFormat === 'WebP (Animated)') {
+        await exportToWebP(video, vw, vh, totalFrames, fps, startTime, currentFile.name);
+      } else if (selectedFormat === 'WebM (Video)') {
+        await exportToWebM(video, vw, vh, totalFrames, fps, startTime, currentFile.name);
+      }
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+      video.src = "";
+      video.load();
+    }
   };
 
-  const exportToMP4Standard = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, audioData: Uint8Array | null, startTime: number) => {
-    setPhase('جاري إنشاء فيديو MP4 القياسي...');
+  const processMerge = async () => {
+    setPhase('جاري دمج الفيديوهات...');
+    // For merging, we'll use the first video's dimensions as base
+    const firstVideo = document.createElement('video');
+    const firstObjectUrl = URL.createObjectURL(files[0]);
+    firstVideo.src = firstObjectUrl;
+    await new Promise(r => firstVideo.onloadedmetadata = () => r(null));
     
-    // Ensure even dimensions for MP4
+    const parsedWidth = parseInt(customWidth as string);
+    const parsedHeight = parseInt(customHeight as string);
+    const validScale = isNaN(exportScale) ? 1.0 : exportScale;
+    
+    let vw = (customWidth && !isNaN(parsedWidth) && parsedWidth > 0) ? parsedWidth : Math.round((firstVideo.videoWidth || 1334) * validScale);
+    let vh = (customHeight && !isNaN(parsedHeight) && parsedHeight > 0) ? parsedHeight : Math.round((firstVideo.videoHeight || 750) * validScale);
+    
+    // Ensure integers and valid values
+    vw = Math.round(vw);
+    vh = Math.round(vh);
+    
+    if (isNaN(vw) || vw <= 0) vw = 1334;
+    if (isNaN(vh) || vh <= 0) vh = 750;
+
+    vw = Math.max(2, vw);
+    vh = Math.max(2, vh);
+    
+    URL.revokeObjectURL(firstObjectUrl);
+    firstVideo.src = "";
+    firstVideo.load();
+
     const safeWidth = vw % 2 === 0 ? vw : vw - 1;
     const safeHeight = vh % 2 === 0 ? vh : vh - 1;
+    const validFps = isNaN(fps) || fps <= 0 ? 30 : fps;
+
+    const muxer = new Mp4Muxer.Muxer({
+        target: new Mp4Muxer.ArrayBufferTarget(),
+        video: {
+            codec: 'avc',
+            width: safeWidth,
+            height: safeHeight
+        },
+        fastStart: 'in-memory'
+    });
+
+    const videoEncoder = new VideoEncoder({
+        output: (chunk: any, meta: any) => muxer.addVideoChunk(chunk, meta),
+        error: (e: any) => console.error(e)
+    });
+
+    const videoCodec = (safeWidth * safeHeight) > 2228224 ? 'avc1.4d0033' : 'avc1.4d002a';
+    let bitrate = customBitrate ? Number(customBitrate) * 1000000 : 8000000;
+
+    videoEncoder.configure({
+        codec: videoCodec,
+        width: safeWidth,
+        height: safeHeight,
+        bitrate: bitrate,
+        framerate: validFps
+    });
+
+    const canvas = document.createElement('canvas');
+    canvas.width = safeWidth; canvas.height = safeHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    let globalFrameCount = 0;
+
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+
+    try {
+      for (let i = 0; i < files.length; i++) {
+          setCurrentFileIndex(i);
+          const currentFile = files[i];
+          const objectUrl = URL.createObjectURL(currentFile);
+          video.src = objectUrl;
+          
+          await new Promise((resolve, reject) => {
+              video.onloadedmetadata = () => resolve(null);
+              video.onerror = () => reject(new Error(`فشل في تحميل الفيديو: ${currentFile.name}`));
+              setTimeout(() => reject(new Error(`انتهت مهلة تحميل الفيديو: ${currentFile.name}`)), 10000);
+          });
+          
+          const fileDuration = video.duration;
+          const fileFrames = Math.floor(fileDuration * validFps);
+
+          for (let f = 0; f < fileFrames; f++) {
+              video.currentTime = f / validFps;
+              await new Promise(r => {
+                  const onSeek = () => { video.removeEventListener('seeked', onSeek); r(null); };
+                  video.addEventListener('seeked', onSeek);
+              });
+
+              if (ctx) {
+                  ctx.clearRect(0, 0, safeWidth, safeHeight);
+                  ctx.drawImage(video, 0, 0, safeWidth, safeHeight);
+                  applyTransparencyEffects(ctx, safeWidth, safeHeight);
+                  
+                  const bitmap = await createImageBitmap(canvas);
+                  const frame = new VideoFrame(bitmap, { timestamp: (globalFrameCount * 1000000) / validFps });
+                  videoEncoder.encode(frame, { keyFrame: globalFrameCount % 30 === 0 });
+                  frame.close();
+                  bitmap.close();
+              }
+              globalFrameCount++;
+              setProgress(Math.floor(((i * fileFrames + f) / (files.length * fileFrames)) * 100));
+          }
+          URL.revokeObjectURL(objectUrl);
+          video.src = "";
+          video.load();
+      }
+    } finally {
+      video.src = "";
+      video.load();
+    }
+
+    await videoEncoder.flush();
+    videoEncoder.close();
+    muxer.finalize();
+    const buffer = muxer.target.buffer;
+    downloadBlob(new Blob([buffer], { type: 'video/mp4' }), `Merged_Video_${Date.now()}.mp4`);
+    
+    if (generateChecksum) {
+        const checksum = await calculateChecksum(buffer);
+        downloadBlob(new Blob([checksum], { type: 'text/plain' }), `Merged_Video_${Date.now()}.sha256`);
+    }
+  };
+
+  const exportToMP4Standard = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, audioData: Uint8Array | null, startTime: number, fileName?: string) => {
+    setPhase('جاري إنشاء فيديو MP4 القياسي...');
+    
+    // Ensure valid dimensions and even integers for MP4
+    vw = Math.round(vw);
+    vh = Math.round(vh);
+    if (isNaN(vw) || vw <= 0) vw = 1334;
+    if (isNaN(vh) || vh <= 0) vh = 750;
+
+    const safeWidth = Math.floor(vw / 2) * 2;
+    const safeHeight = Math.floor(vh / 2) * 2;
+    
+    console.log(`MP4 Export Dimensions: vw=${vw}, vh=${vh}, safeWidth=${safeWidth}, safeHeight=${safeHeight}`);
+    
+    if (isNaN(safeWidth) || safeWidth <= 0 || isNaN(safeHeight) || safeHeight <= 0) {
+        throw new Error(`أبعاد الفيديو غير صالحة: ${safeWidth}x${safeHeight}`);
+    }
 
     // Audio Setup (AAC for MP4)
     let audioTrack: any = undefined;
@@ -533,13 +710,30 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     }
 
     await videoEncoder.flush();
+    videoEncoder.close();
+    if (audioEncoder) {
+        await audioEncoder.flush();
+        audioEncoder.close();
+    }
     muxer.finalize();
-    downloadBlob(new Blob([muxer.target.buffer], { type: 'video/mp4' }), `${file?.name.replace('.mp4', '')}_Standard.mp4`);
+    const buffer = muxer.target.buffer;
+    downloadBlob(new Blob([buffer], { type: 'video/mp4' }), `${fileName?.replace('.mp4', '') || 'Video'}_Standard.mp4`);
+    
+    if (generateChecksum) {
+        const checksum = await calculateChecksum(buffer);
+        downloadBlob(new Blob([checksum], { type: 'text/plain' }), `${fileName?.replace('.mp4', '') || 'Video'}_Standard.sha256`);
+    }
   };
 
-  const exportToVAP105 = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, audioData: Uint8Array | null, startTime: number) => {
+  const exportToVAP105 = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, audioData: Uint8Array | null, startTime: number, fileName?: string) => {
     setPhase('جاري تحضير VAP 1.0.5...');
     
+    // Ensure valid dimensions
+    vw = Math.round(vw);
+    vh = Math.round(vh);
+    if (isNaN(vw) || vw <= 0) vw = 1334;
+    if (isNaN(vh) || vh <= 0) vh = 750;
+
     // VAP Layout Calculation
     const width = vw;
     const height = vh;
@@ -740,6 +934,11 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     }
     
     await videoEncoder.flush();
+    videoEncoder.close();
+    if (audioEncoder) {
+        await audioEncoder.flush();
+        audioEncoder.close();
+    }
     muxer.finalize();
     
     // Generate JSON Config
@@ -786,8 +985,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     const checksum = await calculateChecksum(buffer);
     
     // Download Files
-    const timestamp = new Date().getTime();
-    const baseName = `vap_export_${timestamp}`;
+    const baseName = fileName?.replace('.mp4', '') || `vap_export_${new Date().getTime()}`;
     
     // 1. Video (with embedded vapc)
     const videoBlob = new Blob([buffer], { type: 'video/mp4' });
@@ -800,8 +998,15 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     alert("تم تصدير ملفات VAP 1.0.5 بنجاح!");
   };
 
-  const exportToWebM = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, startTime: number) => {
+  const exportToWebM = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, startTime: number, fileName?: string) => {
     setPhase('جاري إنشاء WebM الشفاف...');
+
+    // Ensure valid dimensions
+    vw = Math.round(vw);
+    vh = Math.round(vh);
+    if (isNaN(vw) || vw <= 0) vw = 1334;
+    if (isNaN(vh) || vh <= 0) vh = 750;
+
     const muxer = new WebMMuxer.Muxer({
         target: new WebMMuxer.ArrayBufferTarget(),
         video: { codec: 'V_VP9', width: vw, height: vh, frameRate: fps, alpha: true }
@@ -846,12 +1051,18 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     }
 
     await videoEncoder.flush();
+    videoEncoder.close();
     muxer.finalize();
-    downloadBlob(new Blob([muxer.target.buffer], { type: 'video/webm' }), `${file?.name.replace('.mp4', '')}.webm`);
+    downloadBlob(new Blob([muxer.target.buffer], { type: 'video/webm' }), `${fileName?.replace('.mp4', '') || 'Video'}.webm`);
   };
 
-  const exportToWebP = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, startTime: number) => {
+  const exportToWebP = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, startTime: number, fileName?: string) => {
     setPhase('جاري إنشاء WebP المتحرك...');
+    
+    // Ensure valid dimensions
+    if (isNaN(vw) || vw <= 0) vw = 1334;
+    if (isNaN(vh) || vh <= 0) vh = 750;
+
     const canvas = document.createElement('canvas');
     canvas.width = vw; canvas.height = vh;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -987,12 +1198,23 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     setProgress(100);
   };
 
-  const exportToVAP = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, audioData: Uint8Array | null, startTime: number) => {
+  const exportToVAP = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, audioData: Uint8Array | null, startTime: number, fileName?: string) => {
     setPhase('جاري إنشاء فيديو VAP...');
     
-    // Ensure even dimensions for MP4
-    const safeWidth = vw % 2 === 0 ? vw : vw - 1;
-    const safeHeight = vh % 2 === 0 ? vh : vh - 1;
+    // Ensure valid dimensions and even integers for MP4
+    vw = Math.round(vw);
+    vh = Math.round(vh);
+    if (isNaN(vw) || vw <= 0) vw = 1334;
+    if (isNaN(vh) || vh <= 0) vh = 750;
+
+    const safeWidth = Math.floor(vw / 2) * 2;
+    const safeHeight = Math.floor(vh / 2) * 2;
+    
+    console.log(`VAP Export Dimensions: vw=${vw}, vh=${vh}, safeWidth=${safeWidth}, safeHeight=${safeHeight}`);
+    
+    if (isNaN(safeWidth) || safeWidth <= 0 || isNaN(safeHeight) || safeHeight <= 0) {
+        throw new Error(`أبعاد الفيديو غير صالحة: ${safeWidth}x${safeHeight}`);
+    }
     
     const vapCanvas = document.createElement('canvas');
     vapCanvas.width = safeWidth * 2;
@@ -1022,6 +1244,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
 
             const numberOfChannels = 2;
             const sampleRate = audioBuffer.sampleRate;
+            const duration = totalFrames / fps;
             const maxSamples = Math.floor(duration * sampleRate);
             const length = Math.min(audioBuffer.length, maxSamples);
             const planarBuffer = new Float32Array(length * numberOfChannels);
@@ -1151,17 +1374,26 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     }
 
     await videoEncoder.flush();
+    videoEncoder.close();
+    if (audioEncoder) {
+        await audioEncoder.flush();
+        audioEncoder.close();
+    }
     muxer.finalize();
     
     downloadBlob(new Blob([muxer.target.buffer], { type: 'video/mp4' }), `${file?.name}_VAP.mp4`);
   };
 
-  const exportToSVGA = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, audioData: Uint8Array | null, startTime: number, endTime: number) => {
+  const exportToSVGA = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, audioData: Uint8Array | null, startTime: number, endTime: number, fileName?: string) => {
     if (totalFrames <= 0) {
       alert("مدة الفيديو غير صالحة للتحويل");
       return;
     }
     
+    // Ensure valid dimensions
+    if (isNaN(vw) || vw <= 0) vw = 1334;
+    if (isNaN(vh) || vh <= 0) vh = 750;
+
     setPhase('جاري إنشاء ملف SVGA...');
     console.log(`Starting SVGA export: ${vw}x${vh}, ${totalFrames} frames, ${fps} fps`);
     
@@ -1370,9 +1602,13 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     }
   };
 
-  const exportToGIF = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, startTime: number) => {
+  const exportToGIF = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, startTime: number, fileName?: string) => {
     setPhase('جاري إنشاء GIF الشفاف...');
     
+    // Ensure valid dimensions
+    if (isNaN(vw) || vw <= 0) vw = 1334;
+    if (isNaN(vh) || vh <= 0) vh = 750;
+
     // Fetch worker to avoid path issues
     let workerUrl = '/gif.worker.js';
     try {
@@ -1416,8 +1652,13 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     gif.render();
   };
 
-  const exportToAPNG = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, startTime: number) => {
+  const exportToAPNG = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, startTime: number, fileName?: string) => {
     setPhase('جاري إنشاء APNG الشفاف...');
+    
+    // Ensure valid dimensions
+    if (isNaN(vw) || vw <= 0) vw = 1334;
+    if (isNaN(vh) || vh <= 0) vh = 750;
+
     const framesData: ArrayBuffer[] = [];
     const delays: number[] = [];
     const canvas = document.createElement('canvas');
@@ -1450,6 +1691,12 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     link.click();
   };
 
+  const calculateChecksum = async (buffer: ArrayBuffer): Promise<string> => {
+    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
   return (
     <div className="max-w-6xl mx-auto p-6 sm:p-10 bg-slate-900/60 backdrop-blur-3xl rounded-[3rem] border border-white/10 shadow-3xl text-right font-arabic" dir="rtl">
       <div className="flex items-center justify-between mb-10">
@@ -1472,9 +1719,21 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         <div className="xl:col-span-4 space-y-6">
           <div 
             onClick={() => fileInputRef.current?.click()}
-            className={`h-64 rounded-[2.5rem] border-2 border-dashed transition-all flex flex-col items-center justify-center cursor-pointer group relative overflow-hidden ${file ? 'border-sky-500 bg-sky-500/5' : 'border-white/10 hover:border-sky-500/50 hover:bg-white/5'}`}
+            className={`h-64 rounded-[2.5rem] border-2 border-dashed transition-all flex flex-col items-center justify-center cursor-pointer group relative overflow-hidden ${files.length > 0 ? 'border-sky-500 bg-sky-500/5' : 'border-white/10 hover:border-sky-500/50 hover:bg-white/5'}`}
           >
-            <input type="file" ref={fileInputRef} className="hidden" accept="video/mp4" onChange={(e) => setFile(e.target.files?.[0] || null)} />
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              className="hidden" 
+              accept="video/mp4" 
+              multiple
+              onChange={(e) => {
+                const newFiles = Array.from(e.target.files || []);
+                if (newFiles.length > 0) {
+                  setFiles(prev => [...prev, ...newFiles]);
+                }
+              }} 
+            />
             {file ? (
               <div className="text-center p-6 relative z-10 w-full h-full flex flex-col items-center justify-center">
                 {videoUrl ? (
@@ -1510,11 +1769,72 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
                 <div className="w-20 h-20 bg-white/5 rounded-3xl flex items-center justify-center mx-auto mb-4 border border-white/5 group-hover:scale-110 transition-transform">
                   <Video className="w-10 h-10 text-slate-400" />
                 </div>
-                <div className="text-white font-black text-sm">اضغط لرفع الفيديو</div>
-                <div className="text-slate-500 text-[10px] font-bold mt-2 uppercase tracking-widest">MP4 فقط (أقل من 10 ثوانٍ)</div>
+                <div className="text-white font-black text-sm">اضغط لرفع الفيديوهات</div>
+                <div className="text-slate-500 text-[10px] font-bold mt-2 uppercase tracking-widest">MP4 فقط</div>
               </div>
             )}
           </div>
+
+          {files.length > 0 && (
+            <div className="bg-slate-950/40 p-6 rounded-[2.5rem] border border-white/5 space-y-4">
+              <div className="flex items-center justify-between">
+                <h4 className="text-white font-black text-xs uppercase tracking-widest text-slate-400 flex items-center gap-2">
+                  <Layers className="w-4 h-4 text-sky-500" />
+                  الملفات المرفوعة ({files.length})
+                </h4>
+                <button 
+                  onClick={() => {
+                    setFiles([]);
+                    setCurrentFileIndex(0);
+                  }}
+                  className="text-[10px] font-black uppercase tracking-widest text-red-400 hover:text-red-300 flex items-center gap-1 transition-colors"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  مسح الكل
+                </button>
+              </div>
+              <div className="max-h-48 overflow-y-auto space-y-2 custom-scrollbar pr-2">
+                {files.map((f, i) => (
+                  <div 
+                    key={i} 
+                    className={`flex items-center justify-between p-3 rounded-2xl border transition-all ${i === currentFileIndex ? 'bg-sky-500/10 border-sky-500/30' : 'bg-white/5 border-white/5 hover:border-white/10'}`}
+                  >
+                    <div className="flex items-center gap-3 overflow-hidden">
+                      <div className="w-8 h-8 rounded-lg bg-slate-800 flex items-center justify-center flex-shrink-0">
+                        <Film className="w-4 h-4 text-slate-400" />
+                      </div>
+                      <span className="text-xs text-slate-300 truncate font-bold">{f.name}</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setCurrentFileIndex(i);
+                        }}
+                        className={`p-1.5 rounded-lg transition-colors ${i === currentFileIndex ? 'bg-sky-500 text-white' : 'bg-slate-800 text-slate-400 hover:text-white'}`}
+                      >
+                        <Maximize className="w-3.5 h-3.5" />
+                      </button>
+                      <button 
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const newFiles = [...files];
+                          newFiles.splice(i, 1);
+                          setFiles(newFiles);
+                          if (currentFileIndex >= newFiles.length) {
+                            setCurrentFileIndex(Math.max(0, newFiles.length - 1));
+                          }
+                        }}
+                        className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-red-400 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           {file && (
             <div className="bg-slate-950/40 p-6 rounded-[2.5rem] border border-white/5 space-y-4">
@@ -1589,6 +1909,30 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
                 <span className="text-white font-black text-xs uppercase tracking-widest">إعدادات متقدمة</span>
               </div>
               <div className="px-3 py-1 bg-sky-500/10 text-sky-400 text-[9px] font-black rounded-lg border border-sky-500/20">ADVANCED MODE</div>
+            </div>
+
+            {/* Batch & Verification Options */}
+            <div className="grid grid-cols-2 gap-4 pb-4 border-b border-white/5">
+              <div className="space-y-2">
+                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">دمج الفيديوهات</div>
+                <button 
+                  onClick={() => setIsMerging(!isMerging)}
+                  className={`w-full p-3 rounded-2xl border transition-all flex items-center justify-between ${isMerging ? 'bg-sky-500/10 border-sky-500/30 text-sky-400' : 'bg-white/5 border-white/5 text-slate-500 hover:border-white/10'}`}
+                >
+                  <Layers className="w-4 h-4" />
+                  <span className="text-[10px] font-black">{isMerging ? 'مفعل' : 'معطل'}</span>
+                </button>
+              </div>
+              <div className="space-y-2">
+                <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest">ملف التحقق (SHA-256)</div>
+                <button 
+                  onClick={() => setGenerateChecksum(!generateChecksum)}
+                  className={`w-full p-3 rounded-2xl border transition-all flex items-center justify-between ${generateChecksum ? 'bg-sky-500/10 border-sky-500/30 text-sky-400' : 'bg-white/5 border-white/5 text-slate-500 hover:border-white/10'}`}
+                >
+                  <Download className="w-4 h-4" />
+                  <span className="text-[10px] font-black">{generateChecksum ? 'مفعل' : 'معطل'}</span>
+                </button>
+              </div>
             </div>
 
             {/* Quality Settings */}
