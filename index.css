@@ -1,0 +1,96 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --app-height: 100%;
+}
+
+html, body {
+  padding: 0;
+  margin: 0;
+  height: 100dvh;
+  width: 100vw;
+  overflow: hidden;
+  background-color: #030816;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overscroll-behavior-y: contain;
+}
+
+#root {
+  height: 100dvh;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-top: env(safe-area-inset-top);
+}
+
+/* منع أي تفاعل لمسي غير ضروري */
+* {
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input, textarea {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* إخفاء شريط التمرير بشكل نهائي وعدواني لجميع المتصفحات (Webkit, Firefox, IE) */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+  background: transparent !important;
+  -webkit-appearance: none !important;
+}
+
+.scrollbar-hide::-webkit-scrollbar-thumb {
+  background: transparent !important;
+  display: none !important;
+}
+
+.scrollbar-hide::-webkit-scrollbar-track {
+  background: transparent !important;
+  display: none !important;
+}
+
+.scrollbar-hide::-webkit-scrollbar-button {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none !important; /* Internet Explorer and Edge */
+  scrollbar-width: none !important;  /* Firefox */
+  overflow: -moz-scrollbars-none !important;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ضمان تطبيق الإخفاء حتى في حالة وجود Scrollbar Gutter */
+.scrollbar-hide {
+  scrollbar-gutter: stable both-edges; /* Prevents layout shift but we hide it anyway */
+  scrollbar-gutter: unset !important;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}

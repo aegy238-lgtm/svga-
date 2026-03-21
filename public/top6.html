@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>مزج الفيديو مع نص TOP 6</title>
+    <style>
+        body {
+            background: #f0f0f0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            direction: rtl;
+        }
+        .container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            padding: 30px;
+            max-width: 800px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        canvas {
+            width: 100%;
+            max-height: 400px;
+            background: #000;
+            border-radius: 10px;
+            margin: 20px 0;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+        }
+        .file-input {
+            margin: 20px 0;
+            padding: 10px;
+            border: 2px dashed #4CAF50;
+            border-radius: 10px;
+            background: #f9f9f9;
+        }
+        .btn-india {
+            background: linear-gradient(135deg, #FF9933 0%, #FFFFFF 50%, #138808 100%);
+            border: none;
+            color: #000;
+            font-weight: bold;
+            font-size: 1.2rem;
+            padding: 15px 30px;
+            border-radius: 50px;
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            transition: transform 0.3s, box-shadow 0.3s;
+            margin: 10px;
+            border: 2px solid #fff;
+        }
+        .btn-india:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.3);
+        }
+        .btn-india:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .info {
+            background: #e3f2fd;
+            border-radius: 10px;
+            padding: 10px;
+            margin: 15px 0;
+            font-size: 0.9rem;
+        }
+        .warning {
+            color: #d32f2f;
+            font-weight: bold;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🇮🇳 تحويل الفيديو مع إضافة "TOP 6" 🇮🇳</h1>
+        <div class="info">
+            ⚡ اختر فيديو (مثل <code>vap_rocket_reward_6.mp4</code>) ثم اضغط الزر لتصدير الفيديو بنفس الشكل المطلوب.
+        </div>
+        <div class="file-input">
+            <label for="videoFile">اختر ملف الفيديو:</label>
+            <input type="file" id="videoFile" accept="video/*">
+        </div>
+        <canvas id="canvas" width="640" height="360"></canvas>
+        <div>
+            <button class="btn-india" id="recordBtn" disabled>🎬 ابدأ التصدير (MP4)</button>
+        </div>
+        <div id="message" class="info" style="display:none;"></div>
+    </div>
+
+    <script>
+        (function() {
+            const canvas = document.getElementById('canvas');
+            const ctx = canvas.getContext('2d');
+            const fileInput = document.getElementById('videoFile');
+            const recordBtn = document.getElementById('recordBtn');
+            const messageDiv = document.getElementById('message');
+
+            let videoElement = document.createElement('video');
+            videoElement.crossOrigin = 'anonymous';
+            videoElement.muted = true; // مهم للتشغيل التلقائي
+            videoElement.loop = false;
+
+            let mediaRecorder;
+            let recordedChunks = [];
+            let recording = false;
+            let animationFrame;
+
+            // تعيين أبعاد canvas من الفيديو بعد التحميل
+            fileInput.addEventListener('change', function(e) {
+                const file = e.target.files[0];
+                if (file) {
+                    const url = URL.createObjectURL(file);
+                    videoElement.src = url;
+                    videoElement.load();
+                    videoElement.play();
+
+                    videoElement.onloadedmetadata = function() {
+                        // ضبط أبعاد canvas حسب الفيديو مع الحفاظ على النسبة
+                        const vidWidth = videoElement.videoWidth;
+                        const vidHeight = videoElement.videoHeight;
+                        if (vidWidth && vidHeight) {
+                            canvas.width = vidWidth;
+                            canvas.height = vidHeight;
+                        } else {
+                            canvas.width = 640;
+                            canvas.height = 360;
+                        }
+                        drawFrame(); // بدء الرسم
+                        recordBtn.disabled = false;
+                    };
+                }
+            });
+
+            // دورة الرسم المستمرة
+            function drawFrame() {
+                if (!videoElement.paused && !videoElement.ended) {
+                    // رسم الفيديو على canvas
+                    ctx.drawImage(videoElement, 0, 0, canvas.width, canvas.height);
+
+                    // رسم نص "TOP 6" في الأعلى بنفس التصميم الظاهر
+                    ctx.font = 'bold 80px "Arial Black", "Impact", sans-serif';
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.strokeStyle = '#000000';
+                    ctx.lineWidth = 6;
+                    ctx.textAlign = 'center';
+                    ctx.shadowColor = 'rgba(0,0,0,0.8)';
+                    ctx.shadowBlur = 15;
+                    ctx.shadowOffsetX = 5;
+                    ctx.shadowOffsetY = 5;
+
+                    // وضع النص في الثلث العلوي
+                    const textX = canvas.width / 2;
+                    const textY = canvas.height * 0.2; // 20% من الأعلى
+                    ctx.strokeText('TOP 6', textX, textY);
+                    ctx.fillText('TOP 6', textX, textY);
+
+                    // إعادة الظلال
+                    ctx.shadowColor = 'transparent';
+                }
+                animationFrame = requestAnimationFrame(drawFrame);
+            }
+
+            // بدء التسجيل
+            function startRecording() {
+                recordedChunks = [];
+                const stream = canvas.captureStream(30); // 30 إطار في الثانية
+                let options = { mimeType: 'video/mp4' }; // نحاول MP4 أولاً
+
+                // التحقق من دعم MP4
+                if (!MediaRecorder.isTypeSupported('video/mp4')) {
+                    showMessage('المتصفح لا يدعم تسجيل MP4 مباشرة، سيتم التسجيل بصيغة WebM. يمكنك تحويله لاحقاً.', 'warning');
+                    options = { mimeType: 'video/webm' };
+                } else {
+                    // بعض المتصفحات تحتاج كوديك محدد
+                    options = { mimeType: 'video/mp4; codecs="avc1.42E01E"' };
+                    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                        options = { mimeType: 'video/mp4' }; // المحاولة العامة
+                    }
+                }
+
+                try {
+                    mediaRecorder = new MediaRecorder(stream, options);
+                } catch (e) {
+                    showMessage('فشل إنشاء المسجل: ' + e.message, 'warning');
+                    return;
+                }
+
+                mediaRecorder.ondataavailable = function(event) {
+                    if (event.data.size > 0) {
+                        recordedChunks.push(event.data);
+                    }
+                };
+
+                mediaRecorder.onstop = function() {
+                    // إنشاء blob وتحميله
+                    const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'output_' + Date.now() + (mediaRecorder.mimeType.includes('mp4') ? '.mp4' : '.webm');
+                    document.body.appendChild(a);
+                    a.click();
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                    showMessage('تم التصدير بنجاح!', 'success');
+                    recordBtn.disabled = false;
+                    recordBtn.innerText = '🎬 ابدأ التصدير (MP4)';
+                };
+
+                // بدء التسجيل
+                mediaRecorder.start();
+                recording = true;
+                recordBtn.disabled = true;
+                recordBtn.innerText = '⏺ جاري التسجيل...';
+
+                // تشغيل الفيديو من البداية
+                videoElement.currentTime = 0;
+                videoElement.play();
+
+                // تحديد مدة التسجيل (مثلاً 5 ثوانٍ أو طول الفيديو)
+                // يمكنك تعديل المدة هنا، نستخدم طول الفيديو
+                const duration = videoElement.duration * 1000; // بالمللي ثانية
+                if (duration && isFinite(duration)) {
+                    setTimeout(() => {
+                        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                            mediaRecorder.stop();
+                            videoElement.pause();
+                        }
+                    }, duration);
+                } else {
+                    // إذا لم نتمكن من معرفة المدة، نسجل 5 ثوانٍ افتراضياً
+                    setTimeout(() => {
+                        if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                            mediaRecorder.stop();
+                            videoElement.pause();
+                        }
+                    }, 5000);
+                }
+            }
+
+            recordBtn.addEventListener('click', startRecording);
+
+            function showMessage(text, type) {
+                messageDiv.style.display = 'block';
+                messageDiv.innerText = text;
+                messageDiv.className = 'info ' + (type === 'warning' ? 'warning' : '');
+                setTimeout(() => {
+                    messageDiv.style.display = 'none';
+                }, 5000);
+            }
+
+            // تنظيف عند إغلاق الصفحة
+            window.addEventListener('beforeunload', function() {
+                if (animationFrame) {
+                    cancelAnimationFrame(animationFrame);
+                }
+                if (mediaRecorder && mediaRecorder.state === 'recording') {
+                    mediaRecorder.stop();
+                }
+            });
+        })();
+    </script>
+</body>
+</html>
