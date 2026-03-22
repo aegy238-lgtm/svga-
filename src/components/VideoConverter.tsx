@@ -385,7 +385,9 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
       const rawWidth = (customWidth && !isNaN(parsedWidth) && parsedWidth > 0) ? parsedWidth : (video.videoWidth || 1334) * validScale;
       const rawHeight = (customHeight && !isNaN(parsedHeight) && parsedHeight > 0) ? parsedHeight : (video.videoHeight || 750) * validScale;
       
-      const safe = calculateSafeDimensions(rawWidth, rawHeight);
+      const isVap = selectedFormat === 'VAP (MP4)' || selectedFormat === 'VAP 1.0.5';
+      const maxPixels = isVap ? 6000000 : 9437184; // Cap VAP earlier because it expands dimensions
+      const safe = calculateSafeDimensions(rawWidth, rawHeight, maxPixels);
       let vw = safe.width;
       let vh = safe.height;
       
@@ -466,9 +468,13 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         fastStart: 'in-memory'
     });
 
+    let hasEncoderError = false;
     const videoEncoder = new VideoEncoder({
         output: (chunk: any, meta: any) => muxer.addVideoChunk(chunk, meta),
-        error: (e: any) => console.error(e)
+        error: (e: any) => {
+            console.error("VideoEncoder error:", e);
+            hasEncoderError = true;
+        }
     });
 
     const videoCodec = (safeWidth * safeHeight) > 2228224 ? 'avc1.4d0033' : 'avc1.4d002a';
@@ -516,6 +522,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
               });
 
               if (ctx) {
+                  if (hasEncoderError) break;
                   ctx.clearRect(0, 0, safeWidth, safeHeight);
                   ctx.drawImage(video, 0, 0, safeWidth, safeHeight);
                   applyTransparencyEffects(ctx, safeWidth, safeHeight);
@@ -538,6 +545,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
       video.load();
     }
 
+    if (hasEncoderError) throw new Error("Video encoding failed. Check console for details.");
     await videoEncoder.flush();
     videoEncoder.close();
     muxer.finalize();
@@ -636,9 +644,13 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         fastStart: 'in-memory'
     });
 
+    let hasEncoderError = false;
     const videoEncoder = new VideoEncoder({
         output: (chunk: any, meta: any) => muxer.addVideoChunk(chunk, meta),
-        error: (e: any) => console.error(e)
+        error: (e: any) => {
+            console.error("VideoEncoder error:", e);
+            hasEncoderError = true;
+        }
     });
 
     const videoCodec = (safeWidth * safeHeight) > 2228224 ? 'avc1.4d0033' : 'avc1.4d002a';
@@ -648,13 +660,6 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
       if (globalQuality === 'high') bitrate = 15000000;
       if (globalQuality === 'low') bitrate = 4000000;
     }
-
-    videoEncoder.configure({
-        codec: videoCodec,
-        width: safeWidth,
-        height: safeHeight,
-        bitrate: bitrate
-    });
 
     if (audioTrack) {
         audioEncoder = new AudioEncoder({
@@ -674,6 +679,14 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         await audioEncoder.flush();
     }
 
+    // Configure video encoder right before the loop to avoid inactivity reclamation
+    videoEncoder.configure({
+        codec: videoCodec,
+        width: safeWidth,
+        height: safeHeight,
+        bitrate: bitrate
+    });
+
     const canvas = document.createElement('canvas');
     canvas.width = safeWidth; canvas.height = safeHeight;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
@@ -686,19 +699,36 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         });
 
         if (ctx) {
+            if (hasEncoderError) break;
             ctx.clearRect(0, 0, safeWidth, safeHeight);
             ctx.drawImage(video, 0, 0, safeWidth, safeHeight);
             applyTransparencyEffects(ctx, safeWidth, safeHeight);
             
             const bitmap = await createImageBitmap(canvas);
             const frame = new VideoFrame(bitmap, { timestamp: (i * 1000000) / fps });
+            
+            while (videoEncoder.encodeQueueSize > 10 && !hasEncoderError) {
+                await new Promise(r => requestAnimationFrame(r));
+            }
+            
+            if (hasEncoderError) {
+                frame.close();
+                bitmap.close();
+                break;
+            }
+
             videoEncoder.encode(frame, { keyFrame: i % 30 === 0 });
             frame.close();
             bitmap.close();
         }
-        setProgress(Math.floor((i / totalFrames) * 100));
+        
+        if (i % 5 === 0) {
+            await new Promise(r => requestAnimationFrame(r));
+            setProgress(Math.floor((i / totalFrames) * 100));
+        }
     }
 
+    if (hasEncoderError) throw new Error("Video encoding failed. Check console for details.");
     await videoEncoder.flush();
     videoEncoder.close();
     if (audioEncoder) {
@@ -915,12 +945,19 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         // Create VideoFrame
         if (hasEncoderError) throw new Error("Video encoding failed");
         const videoFrame = new VideoFrame(canvas, { timestamp: i * frameDuration });
+        
+        while (videoEncoder.encodeQueueSize > 10) {
+            await new Promise(r => requestAnimationFrame(r));
+        }
+        
         videoEncoder.encode(videoFrame, { keyFrame: i % 30 === 0 });
         videoFrame.close();
         
         // Yield to UI
-        await new Promise(r => setTimeout(r, 0));
-        setProgress(Math.floor((i / totalFrames) * 100));
+        if (i % 5 === 0) {
+            await new Promise(r => requestAnimationFrame(r));
+            setProgress(Math.floor((i / totalFrames) * 100));
+        }
     }
     
     await videoEncoder.flush();
@@ -1002,9 +1039,13 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         video: { codec: 'V_VP9', width: vw, height: vh, frameRate: fps, alpha: true }
     });
 
+    let hasEncoderError = false;
     const videoEncoder = new VideoEncoder({
         output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-        error: (e) => console.error(e)
+        error: (e) => {
+            console.error("VideoEncoder error:", e);
+            hasEncoderError = true;
+        }
     });
 
     videoEncoder.configure({
@@ -1027,17 +1068,33 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         });
 
         if (ctx) {
+            if (hasEncoderError) break;
             ctx.clearRect(0, 0, vw, vh);
             ctx.drawImage(video, 0, 0, vw, vh);
             applyTransparencyEffects(ctx, vw, vh);
             
             const bitmap = await createImageBitmap(canvas);
             const frame = new VideoFrame(bitmap, { timestamp: (i * 1000000) / fps });
+            
+            while (videoEncoder.encodeQueueSize > 10 && !hasEncoderError) {
+                await new Promise(r => requestAnimationFrame(r));
+            }
+            
+            if (hasEncoderError) {
+                frame.close();
+                bitmap.close();
+                break;
+            }
+
             videoEncoder.encode(frame, { keyFrame: i % 30 === 0 });
             frame.close();
             bitmap.close();
         }
-        setProgress(Math.floor((i / totalFrames) * 100));
+        
+        if (i % 5 === 0) {
+            await new Promise(r => requestAnimationFrame(r));
+            setProgress(Math.floor((i / totalFrames) * 100));
+        }
     }
 
     await videoEncoder.flush();
@@ -1282,9 +1339,13 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
       fastStart: 'in-memory'
     });
 
+    let hasEncoderError = false;
     const videoEncoder = new VideoEncoder({
       output: (chunk, meta) => muxer.addVideoChunk(chunk, meta as any),
-      error: (e) => console.error(e)
+      error: (e) => {
+          console.error("VideoEncoder error:", e);
+          hasEncoderError = true;
+      }
     });
 
     if (audioTrack && audioDataChunks.length > 0) {
@@ -1354,6 +1415,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         vCtx.drawImage(tempCanvas, 0, 0, safeWidth, safeHeight); 
       }
 
+      if (hasEncoderError) break;
       const bitmap = await createImageBitmap(vapCanvas);
       const frame = new VideoFrame(bitmap, { timestamp: (i * 1000000) / fps });
       videoEncoder.encode(frame, { keyFrame: i % 30 === 0 });
@@ -1363,6 +1425,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
       setProgress(Math.floor((i / totalFrames) * 100));
     }
 
+    if (hasEncoderError) throw new Error("Video encoding failed. Check console for details.");
     await videoEncoder.flush();
     videoEncoder.close();
     if (audioEncoder) {

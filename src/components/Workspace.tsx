@@ -3029,6 +3029,7 @@ if (!this.JSON) { this.JSON = {}; }
         if (globalQuality === 'high') bitrate = 4000000;
         if (globalQuality === 'low') bitrate = 1000000;
 
+        // Configure video encoder right before the loop to avoid inactivity reclamation
         videoEncoder.configure({
             codec: 'vp09.00.10.08',
             width: safeWidth,
@@ -3098,6 +3099,10 @@ if (!this.JSON) { this.JSON = {}; }
             const bitmap = await createImageBitmap(compCanvas);
             const frame = new VideoFrame(bitmap, { timestamp: (i * 1000000) / fps });
             
+            while (videoEncoder.encodeQueueSize > 10) {
+                await new Promise(r => requestAnimationFrame(r));
+            }
+            
             try {
                 videoEncoder.encode(frame, { keyFrame: i % 30 === 0 });
             } catch (encodeError) {
@@ -3109,10 +3114,14 @@ if (!this.JSON) { this.JSON = {}; }
             frame.close();
             bitmap.close();
             
-            setProgress(Math.floor(((i + 1) / totalFrames) * 90));
+            if (i % 5 === 0) {
+                await new Promise(r => requestAnimationFrame(r));
+                setProgress(Math.floor(((i + 1) / totalFrames) * 90));
+            }
         }
 
         await videoEncoder.flush();
+        videoEncoder.close();
         muxer.finalize();
 
         const buffer = muxer.target.buffer;
@@ -3681,9 +3690,13 @@ if (!this.JSON) { this.JSON = {}; }
                 audio: audioTrack
             });
 
+        let hasEncoderError = false;
         const videoEncoder = new VideoEncoder({
             output: (chunk: any, meta: any) => muxer.addVideoChunk(chunk, meta),
-            error: (e: any) => console.error(e)
+            error: (e: any) => {
+                console.error("VideoEncoder error:", e);
+                hasEncoderError = true;
+            }
         });
 
         if (audioTrack) {
@@ -3785,14 +3798,27 @@ if (!this.JSON) { this.JSON = {}; }
 
             const bitmap = await createImageBitmap(compCanvas);
             const frame = new VideoFrame(bitmap, { timestamp: (i * 1000000) / fps });
+            
+            while (videoEncoder.encodeQueueSize > 10) {
+                await new Promise(r => requestAnimationFrame(r));
+            }
+            
             videoEncoder.encode(frame, { keyFrame: i % 30 === 0 });
             frame.close();
             bitmap.close();
 
-            setProgress(Math.floor(((i + 1) / targetFrames) * 100));
+            if (i % 5 === 0) {
+                await new Promise(r => requestAnimationFrame(r));
+                setProgress(Math.floor(((i + 1) / targetFrames) * 100));
+            }
         }
 
         await videoEncoder.flush();
+        videoEncoder.close();
+        if (audioEncoder) {
+            await audioEncoder.flush();
+            audioEncoder.close();
+        }
         muxer.finalize();
 
         const buffer = muxer.target.buffer;
@@ -4134,14 +4160,26 @@ if (!this.JSON) { this.JSON = {}; }
             // Create VideoFrame
             if (hasEncoderError) throw new Error("Video encoding failed");
             const videoFrame = new VideoFrame(canvas, { timestamp: i * frameDuration });
+            
+            while (videoEncoder.encodeQueueSize > 10) {
+                await new Promise(r => requestAnimationFrame(r));
+            }
+            
             videoEncoder.encode(videoFrame, { keyFrame: i % 30 === 0 });
             videoFrame.close();
             
             // Yield to UI
-            await new Promise(r => setTimeout(r, 0));
+            if (i % 5 === 0) {
+                await new Promise(r => requestAnimationFrame(r));
+            }
         }
         
         await videoEncoder.flush();
+        videoEncoder.close();
+        if (audioEncoder) {
+            await audioEncoder.flush();
+            audioEncoder.close();
+        }
         muxer.finalize();
         
         // Generate JSON Config
@@ -4298,7 +4336,9 @@ if (!this.JSON) { this.JSON = {}; }
             const totalFrames = Math.ceil(recordingDuration * fps) || originalTotalFrames;
             
             // Ensure even dimensions for video encoding using utility
-            const safe = calculateSafeDimensions(videoWidth, videoHeight);
+            const isVap = currentFormat === 'VAP (MP4)' || currentFormat === 'VAP 1.0.5';
+            const maxPixels = isVap ? 6000000 : 9437184; 
+            const safe = calculateSafeDimensions(videoWidth, videoHeight, maxPixels);
             const safeWidth = safe.width;
             const safeHeight = safe.height;
             
@@ -4443,9 +4483,13 @@ if (!this.JSON) { this.JSON = {}; }
                 fastStart: 'in-memory' // Optimize for streaming/playback
             });
 
+            let hasEncoderError = false;
             const videoEncoder = new VideoEncoder({
                 output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-                error: (e) => console.error("VideoEncoder error:", e)
+                error: (e) => {
+                    console.error("VideoEncoder error:", e);
+                    hasEncoderError = true;
+                }
             });
 
             // Configure Audio Encoder if we have audio track
@@ -4501,6 +4545,7 @@ if (!this.JSON) { this.JSON = {}; }
                 }
             }
 
+            // Configure video encoder right before the loop to avoid inactivity reclamation
             videoEncoder.configure(videoConfig);
 
             const tempCanvas = document.createElement('canvas');
@@ -4515,15 +4560,15 @@ if (!this.JSON) { this.JSON = {}; }
                 // Use modulo to loop the animation if totalFrames > originalTotalFrames
                 svgaInstance.stepToFrame(i % originalTotalFrames, true);
                 
-                // Wait for frame rendering - use requestAnimationFrame to sync with paint if possible, 
-                // but here we use a small delay to allow SVGA to draw.
-                await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); // Wait for 2 frames
-                await new Promise(r => setTimeout(r, 50)); // And a safety buffer
-
+                // Wait for frame rendering
+                await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))); 
+                
                 // Manage Encoder Queue - Keep it fed but not overflowing
-                if (videoEncoder.encodeQueueSize > 2) { 
-                    await videoEncoder.flush();
+                while (videoEncoder.encodeQueueSize > 5) { 
+                    await new Promise(r => requestAnimationFrame(r));
                 }
+
+                if (hasEncoderError) break;
 
                 // --- COMPOSITION START ---
                 cCtx.clearRect(0, 0, safeWidth, safeHeight);
@@ -4615,6 +4660,12 @@ if (!this.JSON) { this.JSON = {}; }
                     duration: frameDurationMicros 
                 });
                 
+                if (hasEncoderError) {
+                    frame.close();
+                    bitmap.close();
+                    break;
+                }
+
                 // Keyframe Strategy:
                 // Force a keyframe at the start (0) and then every 1 second (fps).
                 // This ensures seekability and recovery from errors without bloating size too much.
@@ -4627,7 +4678,13 @@ if (!this.JSON) { this.JSON = {}; }
                 setProgress(Math.floor(((i + 1) / totalFrames) * 100));
             }
 
+            if (hasEncoderError) throw new Error("Video encoding failed. Check console for details.");
             await videoEncoder.flush();
+            videoEncoder.close();
+            if (audioEncoder) {
+                await audioEncoder.flush();
+                audioEncoder.close();
+            }
             muxer.finalize();
 
             const buffer = muxer.target.buffer;
