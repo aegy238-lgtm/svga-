@@ -4,7 +4,6 @@ import { Uploader } from './components/Uploader';
 import { Workspace } from './components/Workspace';
 import { BatchCompressor } from './components/BatchCompressor';
 import { BatchCropper } from './components/BatchCropper';
-import { BatchSvgaConverter } from './components/BatchSvgaConverter';
 import { VideoConverter } from './components/VideoConverter';
 import { MultiSvgaViewer } from './components/MultiSvgaViewer';
 import { ImageToSvga } from './components/ImageToSvga';
@@ -92,8 +91,36 @@ const App: React.FC = () => {
     if (files.length > 1) {
       const svgaFiles = files.filter(f => f.name.toLowerCase().endsWith('.svga'));
       if (svgaFiles.length > 0) {
-        setBatchFiles(svgaFiles);
-        setState(AppState.BATCH_SVGA_CONVERTER);
+        // Multiple SVGA files uploaded - we'll just process the first one for now
+        // since Batch SVGA Converter was removed.
+        const file = svgaFiles[0];
+        const fileUrl = URL.createObjectURL(file);
+        
+        if (currentUser) {
+          logActivity(currentUser, 'upload', `Uploaded file: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
+        }
+
+        const parser = new SVGA.Parser();
+        parser.load(fileUrl, (videoItem: any) => {
+          let extractedFps = videoItem.FPS || videoItem.fps || 30;
+          if (typeof extractedFps === 'string') extractedFps = parseFloat(extractedFps);
+          if (!extractedFps || extractedFps <= 0) extractedFps = 30;
+
+          const meta: FileMetadata = {
+            name: file.name, size: file.size, type: 'SVGA',
+            dimensions: { width: videoItem.videoSize?.width || 0, height: videoItem.videoSize?.height || 0 },
+            fps: extractedFps, frames: videoItem.frames || 0, assets: [], videoItem,
+            fileUrl: fileUrl,
+            originalFile: file
+          };
+          
+          setFileMetadata(meta);
+          setState(AppState.PROCESSING);
+        }, (err: any) => {
+          console.error("SVGA Load Error:", err);
+          alert("فشل في قراءة ملف SVGA.");
+          URL.revokeObjectURL(fileUrl);
+        });
         return;
       }
     }
@@ -304,7 +331,6 @@ const App: React.FC = () => {
         onImageEditorOpen={() => handleFeatureAccess(AppState.IMAGE_EDITOR, 'Image Editor')}
         onImageMatcherOpen={() => handleFeatureAccess(AppState.IMAGE_MATCHER, 'Image Matcher')}
         onCropperOpen={() => handleFeatureAccess(AppState.BATCH_CROPPER, 'Batch Cropper')}
-        onBatchSvgaOpen={() => handleFeatureAccess(AppState.BATCH_SVGA_CONVERTER, 'Batch SVGA Converter')}
         onSvgaExOpen={() => handleFeatureAccess(AppState.SVGA_EDITOR_EX, 'SVGA Editor EX')}
         onMultiSvgaOpen={() => handleFeatureAccess(AppState.MULTI_SVGA_VIEWER, 'Multi SVGA Preview')}
         onImageProcessorOpen={() => handleFeatureAccess(AppState.IMAGE_PROCESSOR, 'Image Processor')}
@@ -319,7 +345,6 @@ const App: React.FC = () => {
           state === AppState.IMAGE_EDITOR ? 'image-editor' :
           state === AppState.IMAGE_MATCHER ? 'image-matcher' :
           state === AppState.BATCH_CROPPER ? 'cropper' :
-          state === AppState.BATCH_SVGA_CONVERTER ? 'batch-svga' :
           state === AppState.SVGA_EDITOR_EX ? 'svga-ex' :
           state === AppState.MULTI_SVGA_VIEWER ? 'multi-svga' :
           'svga'
@@ -412,16 +437,6 @@ const App: React.FC = () => {
                 onCancel={handleReset} 
                 onLoginRequired={() => {}}
                 onSubscriptionRequired={() => {}}
-              />
-            )}
-            {state === AppState.BATCH_SVGA_CONVERTER && (
-              <BatchSvgaConverter 
-                currentUser={currentUser} 
-                settings={settings}
-                onCancel={handleReset} 
-                onLoginRequired={() => {}}
-                onSubscriptionRequired={() => {}}
-                initialFiles={batchFiles}
               />
             )}
             {state === AppState.MULTI_SVGA_VIEWER && (

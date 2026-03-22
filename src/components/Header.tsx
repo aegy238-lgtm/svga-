@@ -18,7 +18,6 @@ interface HeaderProps {
   onImageEditorOpen: () => void;
   onImageMatcherOpen: () => void;
   onCropperOpen: () => void;
-  onBatchSvgaOpen: () => void;
   onSvgaExOpen: () => void;
   onMultiSvgaOpen: () => void;
   onImageProcessorOpen: () => void;
@@ -42,7 +41,6 @@ export const Header: React.FC<HeaderProps> = ({
   onImageEditorOpen,
   onImageMatcherOpen,
   onCropperOpen,
-  onBatchSvgaOpen,
   onSvgaExOpen,
   onMultiSvgaOpen,
   onImageProcessorOpen,
@@ -71,7 +69,6 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'image-editor', label: 'Image Editor', icon: <Wand2 className="w-4 h-4" />, onClick: onImageEditorOpen },
     { id: 'image-matcher', label: 'Image Matcher', icon: <Maximize className="w-4 h-4" />, onClick: onImageMatcherOpen },
     { id: 'cropper', label: 'Batch Cropper', icon: <Scissors className="w-4 h-4" />, onClick: onCropperOpen },
-    { id: 'batch-svga', label: 'Batch SVGA to MP4', icon: <Video className="w-4 h-4" />, onClick: onBatchSvgaOpen },
     { id: 'store', label: 'Store', icon: <ShoppingBag className="w-4 h-4" />, onClick: onStoreOpen },
   ];
 
