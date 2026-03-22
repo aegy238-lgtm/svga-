@@ -6,6 +6,7 @@ import { collection, getDocs } from 'firebase/firestore';
 import { PresetBackground, UserRecord } from '../types';
 import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import JSZip from 'jszip';
+import { calculateSafeDimensions } from '../utils/dimensions';
 
 declare var SVGA: any;
 
@@ -217,8 +218,11 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
       if (items.length === 1) {
         cols = 1;
         rows = 1;
-        cardW = selectedPreset ? selectedPreset.width : items[0].dimensions.width;
-        cardH = selectedPreset ? selectedPreset.height : items[0].dimensions.height;
+        const rawW = selectedPreset ? selectedPreset.width : items[0].dimensions.width;
+        const rawH = selectedPreset ? selectedPreset.height : items[0].dimensions.height;
+        const safe = calculateSafeDimensions(rawW, rawH);
+        cardW = safe.width;
+        cardH = safe.height;
         canvasWidth = cardW;
         canvasHeight = cardH;
       } else {
@@ -230,17 +234,19 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
         canvasHeight = rows * cardH + (rows + 1) * padding;
       }
 
-      // Force 750x1334 resolution for mobile compatibility
-      canvasWidth = 750;
-      canvasHeight = 1334;
-      
-      // Force 3 columns for consistent layout
-      cols = 3;
-      rows = Math.ceil(items.length / cols);
-      
-      // Re-calculate card dimensions to fit the fixed canvas
-      cardW = (canvasWidth - (cols + 1) * padding) / cols;
-      cardH = (canvasHeight - (rows + 1) * padding) / rows;
+      if (forceMobileSize) {
+        // Force 750x1334 resolution for mobile compatibility
+        canvasWidth = 750;
+        canvasHeight = 1334;
+        
+        // Force 3 columns for consistent layout
+        cols = 3;
+        rows = Math.ceil(items.length / cols);
+        
+        // Re-calculate card dimensions to fit the fixed canvas
+        cardW = (canvasWidth - (cols + 1) * padding) / cols;
+        cardH = (canvasHeight - (rows + 1) * padding) / rows;
+      }
       
       const canvas = document.createElement('canvas');
       canvas.width = canvasWidth;

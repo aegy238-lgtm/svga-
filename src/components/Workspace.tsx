@@ -27,6 +27,8 @@ import { useAccessControl } from '../hooks/useAccessControl';
 import { svgaSchema } from '../svga-proto';
 import { handleSvgaExExport } from '../utils/svgaExExport';
 
+import { calculateSafeDimensions, getDefaultDimensions } from '../utils/dimensions';
+
 interface WorkspaceProps {
   metadata: FileMetadata;
   onCancel: () => void;
@@ -212,8 +214,14 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
   const audioInputRef = useRef<HTMLInputElement>(null);
   const videoInputRef = useRef<HTMLInputElement>(null);
 
-  const videoWidth = 1334;
-  const videoHeight = 750;
+  const { videoWidth, videoHeight } = useMemo(() => {
+    const defaults = getDefaultDimensions(metadata);
+    return {
+      videoWidth: customDimensions?.width || defaults.width,
+      videoHeight: customDimensions?.height || defaults.height
+    };
+  }, [customDimensions, metadata]);
+
   const cost = settings?.costs.svgaProcess || 5;
 
   // ... (existing effects)
@@ -4289,12 +4297,10 @@ if (!this.JSON) { this.JSON = {}; }
             // Use recordingDuration if specified, otherwise fallback to original duration
             const totalFrames = Math.ceil(recordingDuration * fps) || originalTotalFrames;
             
-            // Ensure even dimensions for video encoding
-            let safeWidth = Math.floor((videoWidth || 1334) / 2) * 2;
-            let safeHeight = Math.floor((videoHeight || 750) / 2) * 2;
-            
-            if (isNaN(safeWidth) || safeWidth <= 0) safeWidth = 1334;
-            if (isNaN(safeHeight) || safeHeight <= 0) safeHeight = 750;
+            // Ensure even dimensions for video encoding using utility
+            const safe = calculateSafeDimensions(videoWidth, videoHeight);
+            const safeWidth = safe.width;
+            const safeHeight = safe.height;
             
             // VAP Canvas (2x Width)
             const vapWidth = safeWidth * 2;

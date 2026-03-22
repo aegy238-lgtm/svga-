@@ -33,6 +33,8 @@ declare var WebMMuxer: any;
 
 import { useAccessControl } from '../hooks/useAccessControl';
 
+import { calculateSafeDimensions } from '../utils/dimensions';
+
 interface VideoConverterProps {
   currentUser: UserRecord | null;
   onCancel: () => void;
@@ -376,22 +378,16 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
       await video.play();
       video.pause();
 
-      const parsedWidth = parseInt(customWidth as string);
-      const parsedHeight = parseInt(customHeight as string);
+      const parsedWidth = typeof customWidth === 'number' ? customWidth : parseInt(customWidth as string);
+      const parsedHeight = typeof customHeight === 'number' ? customHeight : parseInt(customHeight as string);
       const validScale = isNaN(exportScale) ? 1.0 : exportScale;
       
-      let vw = (customWidth && !isNaN(parsedWidth) && parsedWidth > 0) ? parsedWidth : Math.round((video.videoWidth || 1334) * validScale);
-      let vh = (customHeight && !isNaN(parsedHeight) && parsedHeight > 0) ? parsedHeight : Math.round((video.videoHeight || 750) * validScale);
+      const rawWidth = (customWidth && !isNaN(parsedWidth) && parsedWidth > 0) ? parsedWidth : (video.videoWidth || 1334) * validScale;
+      const rawHeight = (customHeight && !isNaN(parsedHeight) && parsedHeight > 0) ? parsedHeight : (video.videoHeight || 750) * validScale;
       
-      // Ensure integers and valid values
-      vw = Math.round(vw);
-      vh = Math.round(vh);
-      
-      if (isNaN(vw) || vw <= 0) vw = 1334;
-      if (isNaN(vh) || vh <= 0) vh = 750;
-      
-      vw = Math.max(2, vw);
-      vh = Math.max(2, vh);
+      const safe = calculateSafeDimensions(rawWidth, rawHeight);
+      let vw = safe.width;
+      let vh = safe.height;
       
       video.currentTime = startTime;
       await new Promise(r => {
@@ -441,29 +437,23 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     firstVideo.src = firstObjectUrl;
     await new Promise(r => firstVideo.onloadedmetadata = () => r(null));
     
-    const parsedWidth = parseInt(customWidth as string);
-    const parsedHeight = parseInt(customHeight as string);
+    const parsedWidth = typeof customWidth === 'number' ? customWidth : parseInt(customWidth as string);
+    const parsedHeight = typeof customHeight === 'number' ? customHeight : parseInt(customHeight as string);
     const validScale = isNaN(exportScale) ? 1.0 : exportScale;
     
-    let vw = (customWidth && !isNaN(parsedWidth) && parsedWidth > 0) ? parsedWidth : Math.round((firstVideo.videoWidth || 1334) * validScale);
-    let vh = (customHeight && !isNaN(parsedHeight) && parsedHeight > 0) ? parsedHeight : Math.round((firstVideo.videoHeight || 750) * validScale);
+    const rawWidth = (customWidth && !isNaN(parsedWidth) && parsedWidth > 0) ? parsedWidth : (firstVideo.videoWidth || 1334) * validScale;
+    const rawHeight = (customHeight && !isNaN(parsedHeight) && parsedHeight > 0) ? parsedHeight : (firstVideo.videoHeight || 750) * validScale;
     
-    // Ensure integers and valid values
-    vw = Math.round(vw);
-    vh = Math.round(vh);
-    
-    if (isNaN(vw) || vw <= 0) vw = 1334;
-    if (isNaN(vh) || vh <= 0) vh = 750;
-
-    vw = Math.max(2, vw);
-    vh = Math.max(2, vh);
+    const safe = calculateSafeDimensions(rawWidth, rawHeight);
+    let vw = safe.width;
+    let vh = safe.height;
     
     URL.revokeObjectURL(firstObjectUrl);
     firstVideo.src = "";
     firstVideo.load();
 
-    const safeWidth = vw % 2 === 0 ? vw : vw - 1;
-    const safeHeight = vh % 2 === 0 ? vh : vh - 1;
+    const safeWidth = vw;
+    const safeHeight = vh;
     const validFps = isNaN(fps) || fps <= 0 ? 30 : fps;
 
     const muxer = new Mp4Muxer.Muxer({

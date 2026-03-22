@@ -5,6 +5,8 @@ import { useAccessControl } from '../hooks/useAccessControl';
 import { Download, Trash2, Upload, Play, Check, X, Layers, Settings, RefreshCw, Video, FileVideo } from 'lucide-react';
 import * as Mp4Muxer from 'mp4-muxer';
 
+import { calculateSafeDimensions } from '../utils/dimensions';
+
 declare var SVGA: any;
 declare var JSZip: any;
 declare var VideoEncoder: any;
@@ -125,15 +127,14 @@ export const BatchSvgaConverter: React.FC<BatchSvgaConverterProps> = ({ onCancel
 
         const fps = videoItem.FPS || 30;
         const totalFrames = videoItem.frames;
-        // Ensure even dimensions
+        
+        // Ensure even dimensions using utility
         const rawWidth = videoItem.videoSize?.width || 1334;
         const rawHeight = videoItem.videoSize?.height || 750;
         
-        let width = Math.floor((rawWidth * scale) / 2) * 2;
-        let height = Math.floor((rawHeight * scale) / 2) * 2;
-        
-        if (isNaN(width) || width <= 0) width = 1334;
-        if (isNaN(height) || height <= 0) height = 750;
+        const safe = calculateSafeDimensions(rawWidth * scale, rawHeight * scale);
+        let width = safe.width;
+        let height = safe.height;
 
         const exportWidth = exportFormat === 'vap' ? width * 2 : width;
         const exportHeight = height;
