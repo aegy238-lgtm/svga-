@@ -20,6 +20,7 @@
     "express": "^5.2.1",
     "firebase": "^12.10.0",
     "jszip": "^3.10.1",
+    "lottie-web": "^5.13.0",
     "lucide-react": "^0.575.0",
     "motion": "^12.34.3",
     "mp4-muxer": "^5.2.2",
@@ -27,6 +28,7 @@
     "protobufjs": "^8.0.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
+    "svga.lite": "^1.6.1",
     "tailwind-merge": "^3.5.0",
     "tsx": "^4.21.0"
   },

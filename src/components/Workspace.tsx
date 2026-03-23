@@ -1,8 +1,8 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { motion } from 'motion/react';
+import { motion, AnimatePresence } from 'motion/react';
 import { FileMetadata, MaterialAsset, AppSettings, UserRecord, PresetBackground } from '../types';
-import { Layers, Download, Copy, Trash2, Lock, ListOrdered } from 'lucide-react';
+import { Layers, Download, Copy, Trash2, Lock, ListOrdered, Upload, CheckCircle2 } from 'lucide-react';
 import { logActivity } from '../utils/logger';
 import * as Mp4Muxer from 'mp4-muxer';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
@@ -26,8 +26,11 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { useAccessControl } from '../hooks/useAccessControl';
 import { svgaSchema } from '../svga-proto';
 import { handleSvgaExExport } from '../utils/svgaExExport';
+import { convertSvgaToLottie, convertFramesToLottieSequence } from '../utils/svgaToLottie';
+import { LottieViewer } from './LottieViewer';
 
 import { calculateSafeDimensions, getDefaultDimensions } from '../utils/dimensions';
+import { generateAEProject } from '../services/aeExportService';
 
 interface WorkspaceProps {
   metadata: FileMetadata;
@@ -39,6 +42,7 @@ interface WorkspaceProps {
   globalQuality?: 'low' | 'medium' | 'high';
   onFileReplace?: (meta: FileMetadata) => void;
   mode?: 'normal' | 'ex';
+  onImageConverterOpen?: () => void;
 }
 
 interface CustomLayer {
@@ -55,7 +59,7 @@ interface CustomLayer {
 
 const TRANSPARENT_PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
-export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata, onCancel, settings, currentUser, onLoginRequired, onSubscriptionRequired, globalQuality: initialGlobalQuality = 'high', onFileReplace, mode = 'normal' }) => {
+export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata, onCancel, settings, currentUser, onLoginRequired, onSubscriptionRequired, globalQuality: initialGlobalQuality = 'high', onFileReplace, mode = 'normal', onImageConverterOpen }) => {
   const { checkAccess } = useAccessControl();
   const { t, dir } = useLanguage();
   const [metadata, setMetadata] = useState<FileMetadata>(initialMetadata);
@@ -72,6 +76,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
   const [selectedFormat, setSelectedFormat] = useState('AE Project');
   const [globalQuality, setGlobalQuality] = useState<'low' | 'medium' | 'high'>(initialGlobalQuality);
   const [isExporting, setIsExporting] = useState(false);
+  const [lottiePreviewData, setLottiePreviewData] = useState<any>(null);
   const [progress, setProgress] = useState(0);
   const [exportPhase, setExportPhase] = useState('');
   const [svgaInstance, setSvgaInstance] = useState<any>(null);
@@ -137,6 +142,30 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
   const [recordingDuration, setRecordingDuration] = useState<number>(10);
   const ffmpegRef = useRef(new FFmpeg());
   const [ffmpegLoaded, setFfmpegLoaded] = useState(false);
+  const [aeJsonData, setAeJsonData] = useState<any>(null);
+  const aeJsonInputRef = useRef<HTMLInputElement>(null);
+
+  const handleImportAEJson = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const json = JSON.parse(event.target?.result as string);
+        if (json.version && json.version.includes('QUANTUM')) {
+          setAeJsonData(json);
+          setSelectedFormat('SVGA 2.0');
+          alert("✅ تم استيراد بيانات After Effects بنجاح! يمكنك الآن التصدير بصيغة SVGA 2.0.");
+        } else {
+          alert("❌ ملف غير مدعوم أو إصدار قديم.");
+        }
+      } catch (err) {
+        alert("❌ خطأ في قراءة ملف JSON.");
+      }
+    };
+    reader.readAsText(file);
+  };
 
   const loadFfmpeg = async () => {
     if (ffmpegLoaded) return;
@@ -2415,369 +2444,139 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
     setIsExporting(true);
     setExportPhase('تحليل مصفوفة الطبقات Quantum v5.6...');
     try {
-      const zip = new JSZip();
-      const assetsFolder = zip.folder("assets");
-      
       const { message, imagesData, originalWidth, originalHeight } = await getProcessedSVGAData(true);
 
-      const keys = Object.keys(imagesData);
-      for (let i = 0; i < keys.length; i++) {
-        const key = keys[i];
-        const fileName = `${key}.png`;
-        assetsFolder.file(fileName, imagesData[key]);
-        setProgress(Math.floor((i / keys.length) * 30));
-      }
+      await generateAEProject({
+        metadata,
+        originalWidth,
+        originalHeight,
+        sprites: message.sprites || [],
+        imagesData,
+        previewBg,
+        audioFile,
+        audioUrl,
+        bgPos,
+        bgScale,
+        setProgress
+      });
 
-      if (previewBg) zip.file(`background.png`, previewBg.split(',')[1], { base64: true });
+    } catch (e) { 
+      console.error(e); 
+      alert("❌ Error during After Effects export!");
+    } finally { 
+      setTimeout(() => setIsExporting(false), 800); 
+    }
+  };
 
-      // Handle Audio Export
-      let audioFilename = '';
-      let hasAudio = false;
-      if (audioFile) {
-          const audioBuffer = await audioFile.arrayBuffer();
-          audioFilename = `audio.${audioFile.name.split('.').pop() || 'mp3'}`;
-          assetsFolder.file(audioFilename, audioBuffer);
-          hasAudio = true;
-      } else if (audioUrl) {
-          try {
-              const response = await fetch(audioUrl);
-              const blob = await response.blob();
-              const audioBuffer = await blob.arrayBuffer();
-              const ext = blob.type.split('/')[1] || 'mp3';
-              audioFilename = `audio.${ext}`;
-              assetsFolder.file(audioFilename, audioBuffer);
-              hasAudio = true;
-          } catch (e) {
-              console.warn("Failed to fetch audio for export", e);
-          }
-      }
+  const handleExportLottie = async () => {
+    if (!metadata.videoItem) {
+      alert("لا توجد بيانات SVGA للتصدير.");
+      return;
+    }
 
-      const sprites = message.sprites || [];
-      const exportFps = message.params?.fps || metadata.fps || 30;
-      const exportFrames = message.params?.frames || metadata.frames || 0;
-      const svgaVersion = "2.0"; // Force 2.0 logic for AE export as requested
+    setIsExporting(true);
+    setExportPhase('جاري التحويل إلى Lottie...');
+    setProgress(10);
 
-      const round = (n: number) => Math.round(n * 1000000) / 1000000;
+    try {
+      const videoItem = svgaInstance?.videoItem || metadata.videoItem;
+      if (!videoItem) throw new Error("Video item not found");
 
-      const manifest = {
-        version: "7.0-QUANTUM-ULTRA",
-        format: "SVGA 2.0",
-        svgaVersion: svgaVersion,
-        width: originalWidth,
-        height: originalHeight,
-        fps: exportFps,
-        frames: exportFrames,
-        adjustments: {
-            svga: { pos: {x:0, y:0}, scale: 1 },
-            bg: { pos: bgPos, scale: bgScale, exists: !!previewBg },
-            wm: { pos: {x:0, y:0}, scale: 1, exists: false },
-            audio: { exists: hasAudio, filename: audioFilename }
+      const svgaData = {
+        params: {
+          viewBoxWidth: videoItem.videoSize?.width || 0,
+          viewBoxHeight: videoItem.videoSize?.height || 0,
+          fps: videoItem.FPS || 30,
+          frames: videoItem.frames || 0
         },
-        sprites: sprites.map((s: any, sIdx: number) => {
-          const allFrames: any[] = [];
-          
-          s.frames.forEach((f: any, fIdx: number) => {
-            const currentFrameData = {
-              f: fIdx,
-              a: f.alpha !== undefined ? round(f.alpha) : 1,
-              l: { 
-                x: round(f.layout?.x || 0), 
-                y: round(f.layout?.y || 0), 
-                w: round(f.layout?.width || 0), 
-                h: round(f.layout?.height || 0) 
-              },
-              t: f.transform ? {
-                a: round(f.transform.a),
-                b: round(f.transform.b),
-                c: round(f.transform.c),
-                d: round(f.transform.d),
-                tx: round(f.transform.tx),
-                ty: round(f.transform.ty)
-              } : null
-            };
-            allFrames.push(currentFrameData);
-          });
-
-          return {
-            imageKey: s.imageKey || `layer_${sIdx}`,
-            matteKey: s.matteKey || null,
-            blendMode: s.blendMode || null,
-            hasShapes: !!(s.shapes && s.shapes.length > 0),
-            keyframes: allFrames
-          };
-        })
+        images: videoItem.images || {},
+        sprites: videoItem.sprites || []
       };
 
-      zip.file("manifest.json", JSON.stringify(manifest));
-
-      const jsxContent = `
-if (!this.JSON) { this.JSON = {}; }
-(function () {
-    'use strict';
-    var cx = /[\\u0000\\u00ad\\u0600-\\u0604\\u070f\\u17b4\\u17b5\\u200c-\\u200f\\u2028-\\u202f\\u2060-\\u206f\\ufeff\\ufff0-\\uffff]/g;
-    if (typeof JSON.parse !== 'function') {
-        JSON.parse = function (text) {
-            var j; text = String(text); cx.lastIndex = 0;
-            if (cx.test(text)) { text = text.replace(cx, function (a) { return '\\\\u' + ('0000' + a.charCodeAt(0).toString(16)).slice(-4); }); }
-            j = eval('(' + text + ')'); return j;
-        };
-    }
-}());
-
-(function() {
-    var scriptFile = new File($.fileName);
-    var projectFolder = scriptFile.parent;
-    var manifestFile = new File(projectFolder.fsName + "/manifest.json");
-    
-    if (!manifestFile.exists) {
-        alert("❌ Error: manifest.json not found in the same folder as the script!");
-        return;
-    }
-    
-    manifestFile.open("r");
-    var data = JSON.parse(manifestFile.read());
-    manifestFile.close();
-
-    app.beginUndoGroup("Quantum SVGA Rebuild v7.0");
-    
-    var compDuration = data.frames / data.fps;
-    if (compDuration <= 0) compDuration = 1/data.fps;
-    
-    var mainComp = app.project.items.addComp("Quantum_Animation_Suite", data.width, data.height, 1.0, compDuration, data.fps);
-    mainComp.bgColor = [0,0,0];
-    mainComp.frameRate = data.fps;
-    
-    var masterNull = mainComp.layers.addNull();
-    masterNull.name = "SVGA_ROOT_TRANSFORM";
-    masterNull.position.setValue([0, 0]); // Absolute origin
-    masterNull.scale.setValue([100, 100]);
-
-    var assetsFolder = new Folder(projectFolder.fsName + "/assets");
-    if (!assetsFolder.exists) {
-        assetsFolder = Folder.selectDialog("Select the 'assets' folder");
-    }
-    if (!assetsFolder) { app.endUndoGroup(); return; }
-
-    // Import Audio
-    if (data.adjustments.audio.exists) {
-        var audioFile = File(assetsFolder.fsName + "/" + data.adjustments.audio.filename);
-        if (audioFile.exists) {
-            try {
-                var audioItem = app.project.importFile(new ImportOptions(audioFile));
-                var audioLayer = mainComp.layers.add(audioItem);
-                audioLayer.name = "Audio_Track";
-            } catch(e) { $.writeln("Audio import failed: " + e); }
-        }
-    }
-
-    var layerMap = {};
-    var blendMap = {
-        "ADD": BlendingMode.ADD,
-        "SCREEN": BlendingMode.SCREEN,
-        "MULTIPLY": BlendingMode.MULTIPLY,
-        "OVERLAY": BlendingMode.OVERLAY,
-        "DARKEN": BlendingMode.DARKEN,
-        "LIGHTEN": BlendingMode.LIGHTEN,
-        "COLOR_DODGE": BlendingMode.COLOR_DODGE,
-        "COLOR_BURN": BlendingMode.COLOR_BURN,
-        "HARD_LIGHT": BlendingMode.HARD_LIGHT,
-        "SOFT_LIGHT": BlendingMode.SOFT_LIGHT,
-        "DIFFERENCE": BlendingMode.DIFFERENCE,
-        "EXCLUSION": BlendingMode.EXCLUSION
-    };
-
-    for (var i = 0; i < data.sprites.length; i++) {
-        var sprite = data.sprites[i];
-        var layer;
-        var footage;
-
-        if (sprite.imageKey) {
-            var imgFile = File(assetsFolder.fsName + "/" + sprite.imageKey + ".png");
-            if (imgFile.exists) {
-                try {
-                    footage = app.project.importFile(new ImportOptions(imgFile));
-                    layer = mainComp.layers.add(footage);
-                    layer.anchorPoint.setValue([0, 0]);
-                } catch(e) {
-                    $.writeln("Failed to import: " + imgFile.fsName);
-                }
-            }
-        }
-        
-        if (!layer) {
-            // Create a placeholder for shape layers or missing assets
-            var layerName = "Layer_" + i + (sprite.imageKey ? "_" + sprite.imageKey : "_Shape");
-            if (sprite.hasShapes) {
-                layer = mainComp.layers.addShape();
-                layer.name = layerName + "_[VECTOR]";
-            } else {
-                layer = mainComp.layers.addSolid([0.2, 0.2, 0.2], layerName, 100, 100, 1.0);
-                layer.guideLayer = true;
-            }
-            layer.anchorPoint.setValue([0, 0]);
-        }
-
-        layer.name = "Layer_" + i + "_" + (sprite.imageKey || "Shape");
-        layer.parent = masterNull;
-        layerMap[i] = layer;
-
-        if (sprite.blendMode && blendMap[sprite.blendMode]) {
-            layer.blendingMode = blendMap[sprite.blendMode];
-        }
-        
-        var fd = mainComp.frameDuration;
-        
-        for (var k = 0; k < sprite.keyframes.length; k++) {
-            var kf = sprite.keyframes[k];
-            var time = kf.f * fd;
-            
-            var imgW = footage ? footage.width : (kf.l.w || 100);
-            var imgH = footage ? footage.height : (kf.l.h || 100);
-            
-            var sw = (kf.l.w || 1) / (imgW || 1);
-            var sh = (kf.l.h || 1) / (imgH || 1);
-            
-            var a = kf.t ? kf.t.a : 1;
-            var b = kf.t ? kf.t.b : 0;
-            var c = kf.t ? kf.t.c : 0;
-            var d = kf.t ? kf.t.d : 1;
-            var tx = kf.t ? kf.t.tx : 0;
-            var ty = kf.t ? kf.t.ty : 0;
-
-            var Ma = a * sw;
-            var Mb = b * sw;
-            var Mc = c * sh;
-            var Md = d * sh;
-            var Mtx = a * kf.l.x + c * kf.l.y + tx;
-            var Mty = b * kf.l.x + d * kf.l.y + ty;
-
-            var finalX, finalY;
-            var scaleX = 100;
-            var scaleY = 100;
-            var rot = 0;
-            
-            var opKey = layer.opacity.addKey(time);
-            layer.opacity.setValueAtKey(opKey, kf.a * 100);
-            layer.opacity.setInterpolationTypeAtKey(opKey, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-            
-            scaleX = Math.sqrt(Ma * Ma + Mb * Mb);
-            var det = Ma * Md - Mb * Mc;
-            scaleY = det / (scaleX || 1e-6);
-            rot = Math.atan2(Mb, Ma) * 180 / Math.PI;
-            
-            scaleX *= 100;
-            scaleY *= 100;
-            
-            finalX = Mtx;
-            finalY = Mty;
-            
-            var scaleKey = layer.scale.addKey(time);
-            layer.scale.setValueAtKey(scaleKey, [scaleX, scaleY]);
-            layer.scale.setInterpolationTypeAtKey(scaleKey, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-            
-            var rotKey = layer.rotation.addKey(time);
-            layer.rotation.setValueAtKey(rotKey, rot);
-            layer.rotation.setInterpolationTypeAtKey(rotKey, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-            
-            var posKey = layer.position.addKey(time);
-            layer.position.setValueAtKey(posKey, [finalX, finalY]);
-            layer.position.setInterpolationTypeAtKey(posKey, KeyframeInterpolationType.HOLD, KeyframeInterpolationType.HOLD);
-        }
-    }
-
-    // Apply Track Mattes (Professional Duplicate Logic for multi-use mattes)
-    // We process in reverse to maintain correct stack order during duplication
-    for (var i = data.sprites.length - 1; i >= 0; i--) {
-        var s = data.sprites[i];
-        if (s.matteKey) {
-            var targetLayer = layerMap[i];
-            if (!targetLayer) continue;
-            
-            var originalMatteLayer = null;
-            // Find the sprite that acts as the matte source
-            for (var j = 0; j < data.sprites.length; j++) {
-                if (data.sprites[j].imageKey === s.matteKey) {
-                    originalMatteLayer = layerMap[j];
-                    break;
-                }
-            }
-            
-            if (originalMatteLayer) {
-                try {
-                    // Duplicate the matte layer so it can be used specifically for this target
-                    var matteInstance = originalMatteLayer.duplicate();
-                    matteInstance.name = "[MATTE]_" + originalMatteLayer.name;
-                    matteInstance.moveBefore(targetLayer);
-                    matteInstance.parent = originalMatteLayer.parent;
-                    targetLayer.trackMatteType = TrackMatteType.ALPHA;
-                    
-                    // Hide the original matte layer if it's purely a mask source
-                    // SVGA usually uses separate sprites for masks
-                    originalMatteLayer.enabled = false;
-                } catch(e) { $.writeln("Matte apply failed for layer " + i + ": " + e); }
-            }
-        }
-    }
-
-    if (data.adjustments.bg.exists) {
-        var bgFile = File(projectFolder.fsName + "/background.png");
-        if (bgFile.exists) {
-            var bgL = mainComp.layers.add(app.project.importFile(new ImportOptions(bgFile)));
-            bgL.name = "Quantum_Background";
-            bgL.moveToEnd();
-            bgL.scale.setValue([data.adjustments.bg.scale, data.adjustments.bg.scale]);
-            bgL.position.setValue([data.width * (data.adjustments.bg.pos.x/100), data.height * (data.adjustments.bg.pos.y/100)]);
-        }
-    }
-
-    app.endUndoGroup();
-    alert("✅ Animation Rebuild Complete (v7.0 ULTRA)!\\nLayers: " + data.sprites.length + "\\nCheck Info panel for any missing assets.");
-})();
-      `;
-
-      const readmeContent = `SVGA to AEP Script Usage Guide (v7.0 ULTRA)
-================================
-
-📁 Files Included
------------------
-- ${metadata.name.replace('.svga','')}.jsx - After Effects script file
-- manifest.json - Animation data file (DO NOT DELETE)
-- assets/ - Exported image and audio files
-- README.txt - This file
-
-🚀 Quick Start
---------------
-1. Extract the entire ZIP file to a folder.
-2. Open Adobe After Effects.
-3. Go to File > Scripts > Run Script File.
-4. Select ${metadata.name.replace('.svga','')}.jsx script file.
-5. The script will automatically find manifest.json and assets/ in the same folder.
-
-✅ Features (v7.0 Updates)
---------------------------
-- SVGA 2.0 Engine: Built using the same high-fidelity logic as the SVGA 2.0 export button.
-- Original Version Sync: Detects and labels the project with the original SVGA version (2.0 forced).
-- Robust Layer Recovery: All layers from the original file are now included. Missing assets are replaced with guide placeholders to maintain animation structure.
-- Frame-Perfect Motion: Matches original FPS, frames, and viewBox dimensions exactly.
-- Professional Mirroring: Advanced matrix decomposition for flipped/mirrored layers.
-- Background & Audio support.
-
-⚠️ Requirements
----------------
-- Adobe After Effects CC 2018 or newer.
-- Allow Scripts to Write Files and Access Network (Edit > Preferences > Scripting & Expressions).
-`;
-
-      zip.file(`${metadata.name.replace('.svga','')}.jsx`, jsxContent);
-      zip.file("README.txt", readmeContent);
+      const lottieJson = await convertSvgaToLottie(svgaData);
+      setLottiePreviewData(lottieJson);
       
-      const blob = await zip.generateAsync({ type: "blob" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = `${metadata.name.replace('.svga','')}_AfterEffects_Project.zip`;
-      link.click();
-      setProgress(100);
-    } catch (e) { console.error(e); } finally { setTimeout(() => setIsExporting(false), 800); }
+      if (currentUser) {
+        logActivity(currentUser, 'export', `Exported Lottie: ${metadata.name}.json`);
+      }
+      
+      alert("✅ تم تصدير ملف Lottie بنجاح!");
+    } catch (error) {
+      console.error("Lottie Export Error:", error);
+      alert("❌ فشل في تصدير ملف Lottie.");
+    } finally {
+      setIsExporting(false);
+      setExportPhase('');
+      setProgress(0);
+    }
+  };
+
+  const handleExportLottieSequence = async () => {
+    if (!svgaInstance || !playerRef.current || !metadata.videoItem) {
+      alert("لا توجد بيانات SVGA للتصدير.");
+      return;
+    }
+
+    setIsExporting(true);
+    setExportPhase('جاري تحويل SVGA إلى تسلسل Lottie احترافي...');
+    setProgress(0);
+
+    try {
+      const videoItem = svgaInstance.videoItem || metadata.videoItem;
+      const { width, height } = videoItem.videoSize;
+      const totalFrames = videoItem.frames;
+      const fps = videoItem.FPS || 30;
+
+      // Create a hidden container for rendering
+      const exportContainer = document.createElement('div');
+      exportContainer.style.position = 'fixed';
+      exportContainer.style.left = '-9999px';
+      exportContainer.style.top = '-9999px';
+      exportContainer.style.width = `${width}px`;
+      exportContainer.style.height = `${height}px`;
+      document.body.appendChild(exportContainer);
+
+      const exportPlayer = new SVGA.Player(exportContainer);
+      exportPlayer.setContentMode('Fill');
+      exportPlayer.setVideoItem(videoItem);
+
+      const frames: { data: string; w: number; h: number }[] = [];
+
+      for (let i = 0; i < totalFrames; i++) {
+        setExportPhase(`جاري معالجة الإطار ${i + 1} من ${totalFrames}...`);
+        exportPlayer.stepToFrame(i, false);
+        
+        // Small delay to ensure rendering is complete
+        await new Promise(r => setTimeout(r, 50));
+        
+        const canvas = exportContainer.querySelector('canvas');
+        if (canvas) {
+          const dataUrl = canvas.toDataURL('image/png', 1.0);
+          frames.push({ data: dataUrl, w: width, h: height });
+        }
+        setProgress(Math.round(((i + 1) / totalFrames) * 100));
+      }
+
+      setExportPhase('جاري إنشاء ملف Lottie النهائي...');
+      const lottieJson = await convertFramesToLottieSequence(frames, fps);
+      setLottiePreviewData(lottieJson);
+
+      if (currentUser) {
+        logActivity(currentUser, 'export', `Exported Lottie Sequence: ${metadata.name}.json`);
+      }
+
+      document.body.removeChild(exportContainer);
+      exportPlayer.clear();
+      
+      alert("✅ تم تصدير ملف Lottie (Sequence) بنجاح وبدقة كاملة!");
+    } catch (error) {
+      console.error("Lottie Sequence Export Error:", error);
+      alert("❌ فشل في تصدير ملف Lottie (Sequence).");
+    } finally {
+      setIsExporting(false);
+      setExportPhase('');
+      setProgress(0);
+    }
   };
 
   const handleExportImageSequence = async () => {
@@ -4268,7 +4067,7 @@ if (!this.JSON) { this.JSON = {}; }
     }
   }, [currentUser, selectedFormat]);
 
-  const availableFormats = ['AE Project', 'SVGA 2.0 EX', 'SVGA 2.0', 'Image Sequence', 'GIF (Animation)', 'APNG (Animation)', 'WebM (Video)', 'WebP (Animated)', 'VAP (MP4)', 'VAP 1.0.5'];
+  const availableFormats = ['AE Project', 'SVGA 2.0 EX', 'SVGA 2.0', 'Lottie (JSON)', 'Lottie (Sequence)', 'Image Sequence', 'GIF (Animation)', 'APNG (Animation)', 'WebM (Video)', 'WebP (Animated)', 'VAP (MP4)', 'VAP 1.0.5'];
   
   const displayedFormats = useMemo(() => {
       // If we are in EX mode, only show SVGA 2.0 EX
@@ -4305,6 +4104,8 @@ if (!this.JSON) { this.JSON = {}; }
     }
 
     if (currentFormat === 'AE Project') await handleExportAEProject();
+    else if (currentFormat === 'Lottie (JSON)') await handleExportLottie();
+    else if (currentFormat === 'Lottie (Sequence)') await handleExportLottieSequence();
     else if (currentFormat === 'SVGA 2.0 EX') {
         await handleSvgaExExport({
             metadata, videoWidth, videoHeight, exportScale, svgaScale, svgaPos,
@@ -4719,6 +4520,15 @@ if (!this.JSON) { this.JSON = {}; }
     else if (currentFormat === 'SVGA 2.0' && typeof protobuf !== 'undefined') {
         const isEdgeFadeActive = fadeConfig.top > 0 || fadeConfig.bottom > 0 || fadeConfig.left > 0 || fadeConfig.right > 0;
 
+        // If user is exporting SVGA 2.0 but hasn't uploaded the AE JSON yet, prompt them
+        if (!aeJsonData) {
+            const confirmUpload = window.confirm("⚠️ تنبيه: لم يتم رفع ملف quantum_export.json من After Effects.\n\nهل تريد رفع الملف الآن لدمج التعديلات؟\n(إذا اخترت 'إلغاء'، سيتم التصدير بدون تعديلات AE)");
+            if (confirmUpload) {
+                aeJsonInputRef.current?.click();
+                return; // Stop and wait for upload
+            }
+        }
+
         setIsExporting(true); 
         setExportPhase(isEdgeFadeActive ? 'جاري تطبيق الشفافية على الصور (Baking)...' : 'جاري ضغط الصور وإعادة بناء ملف SVGA...');
         
@@ -4766,6 +4576,40 @@ if (!this.JSON) { this.JSON = {}; }
                 } else {
                     const inflated = pako.inflate(uint8Array);
                     message = MovieEntity.decode(inflated);
+                }
+
+                if (aeJsonData && aeJsonData.sprites) {
+                    // Intelligent Merge: Preserve original SVGA structure while applying AE animation
+                    const aeSpritesMap = new Map();
+                    aeJsonData.sprites.forEach((s: any) => {
+                        if (s.imageKey) aeSpritesMap.set(s.imageKey, s);
+                    });
+
+                    // Update existing sprites with AE data
+                    message.sprites.forEach((sprite: any) => {
+                        const aeSprite = aeSpritesMap.get(sprite.imageKey);
+                        if (aeSprite) {
+                            // Apply AE animation (keyframes)
+                            sprite.keyframes = aeSprite.keyframes;
+                            // Apply AE properties (matte, blend mode)
+                            if (aeSprite.matteKey !== undefined) sprite.matteKey = aeSprite.matteKey;
+                            if (aeSprite.blendMode !== undefined) sprite.blendMode = aeSprite.blendMode;
+                        }
+                    });
+
+                    // Update global params if AE data provides them
+                    if (aeJsonData.width && aeJsonData.height) {
+                        message.params = message.params || {};
+                        message.params.viewBox = { width: aeJsonData.width, height: aeJsonData.height };
+                    }
+                    if (aeJsonData.fps) {
+                        message.params = message.params || {};
+                        message.params.fps = aeJsonData.fps;
+                    }
+                    if (aeJsonData.frames) {
+                        message.params = message.params || {};
+                        message.params.frames = aeJsonData.frames;
+                    }
                 }
 
                 if (message.sprites) {
@@ -6710,6 +6554,48 @@ class _MyAppState extends State<MyApp> {
                   );
                 })}
              </div>
+
+             {/* Dedicated Export Buttons */}
+             <div className="flex flex-col gap-2 mb-2">
+               <div className="flex gap-2">
+                 <button 
+                   onClick={handleExportAEProject}
+                   className="flex-1 py-4 bg-indigo-600 hover:bg-indigo-500 text-white text-[11px] font-black rounded-xl shadow-glow-indigo active:scale-95 transition-all flex items-center justify-center gap-2"
+                   title="تصدير مشروع After Effects"
+                 >
+                   🎬 After Effects
+                 </button>
+
+                 <button 
+                   onClick={handleExportLottie}
+                   className="flex-1 py-4 bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-black rounded-xl shadow-glow-orange active:scale-95 transition-all flex items-center justify-center gap-2"
+                   title="تصدير ملف Lottie (JSON)"
+                 >
+                   ✨ Lottie (JSON)
+                 </button>
+                 
+                 <button 
+                   onClick={() => aeJsonInputRef.current?.click()}
+                   className={`px-4 py-4 text-white text-[11px] font-black rounded-xl active:scale-95 transition-all flex items-center justify-center gap-2 border ${
+                     aeJsonData 
+                       ? 'bg-emerald-600 border-emerald-400 shadow-glow-emerald' 
+                       : 'bg-slate-800 border-white/10 hover:bg-slate-700'
+                   }`}
+                   title="رفع ملف quantum_export.json"
+                 >
+                   {aeJsonData ? <CheckCircle2 className="w-5 h-5" /> : <Upload className="w-5 h-5" />}
+                 </button>
+               </div>
+               
+               <input 
+                 type="file" 
+                 ref={aeJsonInputRef} 
+                 onChange={handleImportAEJson} 
+                 accept=".json" 
+                 className="hidden" 
+               />
+             </div>
+
              <button 
               onClick={handleMainExport} 
               className={`w-full py-5 text-white text-[11px] font-black rounded-[2rem] active:scale-95 transition-all ${
@@ -6847,6 +6733,16 @@ class _MyAppState extends State<MyApp> {
           </div>
         </div>
       )}
+      
+      <AnimatePresence>
+        {lottiePreviewData && (
+          <LottieViewer 
+            animationData={lottiePreviewData} 
+            onClose={() => setLottiePreviewData(null)} 
+            fileName={`${metadata.name.replace('.svga', '')}.json`}
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 };

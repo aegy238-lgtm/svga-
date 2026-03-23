@@ -45,6 +45,7 @@ const App: React.FC = () => {
   const [isQuotaExceeded, setIsQuotaExceeded] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const [globalQuality, setGlobalQuality] = useState<'low' | 'medium' | 'high'>('high');
+  const [initialLottieFile, setInitialLottieFile] = useState<File | null>(null);
 
   useEffect(() => {
     // Check if user has seen onboarding
@@ -126,8 +127,23 @@ const App: React.FC = () => {
     }
 
     const file = files[0];
-    // Allow upload without login
     const fileUrl = URL.createObjectURL(file);
+
+    // Check for Lottie JSON
+    if (file.name.toLowerCase().endsWith('.json') || file.type === 'application/json') {
+        try {
+            const text = await file.text();
+            const json = JSON.parse(text);
+            if (json.v && json.layers && json.fr) {
+                // It's a Lottie file - redirect to Image Converter
+                setInitialLottieFile(file);
+                setState(AppState.IMAGE_CONVERTER);
+                return;
+            }
+        } catch (e) {
+            console.error("Not a valid Lottie JSON", e);
+        }
+    }
 
     // Log the upload activity if user exists
     if (currentUser) {
@@ -293,6 +309,7 @@ const App: React.FC = () => {
     setState(AppState.IDLE);
     setFileMetadata(null);
     setBatchFiles([]);
+    setInitialLottieFile(null);
   }, [fileMetadata]);
 
   if (loading) {
@@ -378,6 +395,7 @@ const App: React.FC = () => {
                 globalQuality={globalQuality}
                 onFileReplace={(meta) => setFileMetadata(meta)}
                 mode={state === AppState.SVGA_EDITOR_EX ? 'ex' : 'normal'}
+                onImageConverterOpen={() => handleFeatureAccess(AppState.IMAGE_CONVERTER, 'Image Converter')}
               />
             )}
             {state === AppState.BATCH_COMPRESSOR && (
@@ -407,6 +425,7 @@ const App: React.FC = () => {
                 onLoginRequired={() => {}}
                 onSubscriptionRequired={() => {}}
                 globalQuality={globalQuality}
+                initialFile={initialLottieFile}
               />
             )}
             {state === AppState.IMAGE_PROCESSOR && (

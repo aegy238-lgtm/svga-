@@ -20,11 +20,46 @@ import {
 } from 'lucide-react';
 import { parse } from 'protobufjs';
 import pako from 'pako';
+import lottie from 'lottie-web';
+import JSZip from 'jszip';
 import { svgaSchema } from '../svga-proto';
 import { logActivity } from '../utils/logger';
 import { useAccessControl } from '../hooks/useAccessControl';
+import { convertSvgaToLottie, convertFramesToLottieSequence } from '../utils/svgaToLottie';
+
+// Custom Lottie Player component to avoid lottie-react hook issues in React 19
+const LottiePlayer: React.FC<{ 
+    animationData: any; 
+    loop?: boolean; 
+    autoplay?: boolean; 
+    className?: string;
+}> = ({ animationData, loop = true, autoplay = true, className }) => {
+    const containerRef = useRef<HTMLDivElement>(null);
+    const animRef = useRef<any>(null);
+
+    useEffect(() => {
+        if (containerRef.current && animationData) {
+            animRef.current = lottie.loadAnimation({
+                container: containerRef.current,
+                renderer: 'svg',
+                loop: loop,
+                autoplay: autoplay,
+                animationData: animationData
+            });
+
+            return () => {
+                if (animRef.current) {
+                    animRef.current.destroy();
+                }
+            };
+        }
+    }, [animationData, loop, autoplay]);
+
+    return <div ref={containerRef} className={className} />;
+};
 
 declare var ImageDecoder: any;
+declare var SVGA: any;
 
 interface ImageToSvgaProps {
   currentUser?: UserRecord | null;
@@ -32,6 +67,7 @@ interface ImageToSvgaProps {
   onLoginRequired: () => void;
   onSubscriptionRequired?: () => void;
   globalQuality?: 'low' | 'medium' | 'high';
+  initialFile?: File | null;
 }
 
 interface ImageFrame {
@@ -42,7 +78,7 @@ interface ImageFrame {
   height: number;
 }
 
-export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel, onLoginRequired, onSubscriptionRequired, globalQuality: initialGlobalQuality = 'high' }) => {
+export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel, onLoginRequired, onSubscriptionRequired, globalQuality: initialGlobalQuality = 'high', initialFile }) => {
   const { checkAccess } = useAccessControl();
   const [frames, setFrames] = useState<ImageFrame[]>([]);
   const [fps, setFps] = useState(10);
@@ -58,11 +94,79 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
   const [autoSize, setAutoSize] = useState(true);
   const [target10MB, setTarget10MB] = useState(false);
   const [imageFormat, setImageFormat] = useState<'png' | 'jpeg' | 'webp'>('png');
+  const [lottieData, setLottieData] = useState<any>(null);
+  const [isLottieMode, setIsLottieMode] = useState(false);
+  const [lottieExtractionMode, setLottieExtractionMode] = useState<'sequence' | 'assets'>('sequence');
+  const [showLottieModal, setShowLottieModal] = useState(false);
+  const [pendingLottieData, setPendingLottieData] = useState<any>(null);
   
   // Range Selection
   const [rangeStart, setRangeStart] = useState(1);
   const [rangeEnd, setRangeEnd] = useState(1);
   const [showRangeModal, setShowRangeModal] = useState(false);
+  const [exportPhase, setExportPhase] = useState('');
+
+  const downloadFramesAsZip = async () => {
+    if (frames.length === 0) return;
+    setIsProcessing(true);
+    setProgress(0);
+    
+    try {
+      const zip = new JSZip();
+      const folder = zip.folder("frames");
+      
+      for (let i = 0; i < frames.length; i++) {
+        const frame = frames[i];
+        // Use the actual file blob
+        folder?.file(`frame_${(i + 1).toString().padStart(4, '0')}.png`, frame.file);
+        setProgress(Math.floor(((i + 1) / frames.length) * 100));
+        
+        // Yield to UI
+        if (i % 20 === 0) await new Promise(r => setTimeout(r, 0));
+      }
+      
+      const content = await zip.generateAsync({ type: 'blob' });
+      const url = URL.createObjectURL(content);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `animation_frames_${Date.now()}.zip`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      if (currentUser) {
+        logActivity(currentUser, 'download_zip', `Downloaded ${frames.length} frames as ZIP`);
+      }
+    } catch (err) {
+      console.error("Error generating ZIP:", err);
+      alert("حدث خطأ أثناء إنشاء ملف ZIP. يرجى المحاولة مرة أخرى.");
+    } finally {
+      setIsProcessing(false);
+      setProgress(0);
+    }
+  };
+
+  const downloadSingleFrame = (frame: ImageFrame, index: number) => {
+    const link = document.createElement('a');
+    link.href = frame.previewUrl;
+    link.download = `frame_${(index + 1).toString().padStart(4, '0')}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Handle initial file if provided
+  useEffect(() => {
+    if (initialFile) {
+        const event = {
+            target: {
+                files: [initialFile]
+            }
+        } as unknown as React.ChangeEvent<HTMLInputElement>;
+        handleFileUpload(event);
+    }
+  }, [initialFile]);
   
   // Background & Watermark
   const [backgroundImage, setBackgroundImage] = useState<string | null>(null);
@@ -124,6 +228,92 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
       const newFrames: ImageFrame[] = [];
       
       for (const file of newFiles) {
+          const fileName = file.name.toLowerCase();
+          
+          // Check if it's an SVGA file
+          if (fileName.endsWith('.svga')) {
+              try {
+                  const buffer = await file.arrayBuffer();
+                  const data = new Uint8Array(buffer);
+                  
+                  // Create a temporary container for SVGA Player
+                  const tempDiv = document.createElement('div');
+                  const player = new SVGA.Player(tempDiv);
+                  const parser = new SVGA.Parser();
+                  
+                  const videoItem = await new Promise<any>((resolve, reject) => {
+                      const blob = new Blob([data], { type: 'application/octet-stream' });
+                      const url = URL.createObjectURL(blob);
+                      
+                      parser.load(url, (videoItem: any) => {
+                          URL.revokeObjectURL(url);
+                          resolve(videoItem);
+                      }, (err: any) => {
+                          URL.revokeObjectURL(url);
+                          reject(err);
+                      });
+                  });
+                  
+                  player.setVideoItem(videoItem);
+                  const totalFrames = videoItem.frames;
+                  const { width, height } = videoItem.videoSize;
+                  
+                  setFps(videoItem.FPS || 20);
+                  setDuration(totalFrames / (videoItem.FPS || 20));
+                  setCanvasSize({ width, height });
+
+                  for (let i = 0; i < totalFrames; i++) {
+                      player.stepToFrame(i, false);
+                      const canvas = tempDiv.querySelector('canvas');
+                      if (canvas) {
+                          const url = canvas.toDataURL('image/png');
+                          const res = await fetch(url);
+                          const blob = await res.blob();
+                          
+                          newFrames.push({
+                              id: Math.random().toString(36).substr(2, 9),
+                              file: new File([blob], `svga_frame_${i}.png`, { type: 'image/png' }),
+                              previewUrl: url,
+                              width: canvas.width,
+                              height: canvas.height
+                          });
+                      }
+                      setProgress(Math.floor(((i + 1) / totalFrames) * 100));
+                      if (i % 5 === 0) await new Promise(r => setTimeout(r, 0));
+                  }
+                  
+                  player.clear();
+                  continue; // Move to next file
+              } catch (err) {
+                  console.error("Error parsing SVGA file:", err);
+                  alert("فشل في قراءة ملف SVGA.");
+                  continue;
+              }
+          }
+
+          // Check if it's a Lottie JSON file
+          if (file.type === 'application/json' || fileName.endsWith('.json')) {
+              try {
+                  const text = await file.text();
+                  const json = JSON.parse(text);
+                  // Basic Lottie validation
+                  if (json.v && json.layers && json.fr) {
+                      setLottieData(json);
+                      setIsLottieMode(true);
+                      setFps(json.fr);
+                      setDuration(json.op / json.fr);
+                      setCanvasSize({ width: json.w, height: json.h });
+                      
+                      setPendingLottieData(json);
+                      setShowLottieModal(true);
+                      setIsProcessing(false);
+                      return; // Stop processing other files if a Lottie is found
+                  }
+              } catch (err) {
+                  console.error("Error parsing Lottie JSON:", err);
+              }
+          }
+
           const isAnimated = file.type === 'image/gif' || file.type === 'image/webp' || file.name.toLowerCase().endsWith('.gif') || file.name.toLowerCase().endsWith('.webp');
           
           if (isAnimated) {
@@ -212,6 +402,147 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
 
   const removeFrame = (id: string) => {
     setFrames(prev => prev.filter(f => f.id !== id));
+    if (frames.length <= 1) {
+        setLottieData(null);
+        setIsLottieMode(false);
+    }
+  };
+
+  const extractAssetsFromLottie = async (data: any) => {
+    if (!data.assets || data.assets.length === 0) {
+        alert("هذا الملف لا يحتوي على أصول (صور) داخلية.");
+        return;
+    }
+
+    setIsProcessing(true);
+    setProgress(0);
+    const extractedAssets: ImageFrame[] = [];
+
+    for (let i = 0; i < data.assets.length; i++) {
+        const asset = data.assets[i];
+        // Check if it's an image asset (has 'p' property and usually 'w', 'h')
+        if (asset.p && asset.w && asset.h) {
+            let imageUrl = '';
+            let blob: Blob | null = null;
+
+            if (asset.p.startsWith('data:image')) {
+                // Base64 embedded image
+                imageUrl = asset.p;
+                const res = await fetch(imageUrl);
+                blob = await res.blob();
+            } else if (asset.u) {
+                // External image (might not work due to CORS, but we try)
+                imageUrl = asset.u + asset.p;
+                try {
+                    const res = await fetch(imageUrl);
+                    blob = await res.blob();
+                } catch (e) {
+                    console.warn(`Could not fetch external asset: ${imageUrl}`);
+                }
+            }
+
+            if (blob) {
+                const previewUrl = URL.createObjectURL(blob);
+                extractedAssets.push({
+                    id: Math.random().toString(36).substr(2, 9),
+                    file: new File([blob], asset.p.split('/').pop() || `asset_${i}.png`, { type: 'image/png' }),
+                    previewUrl: previewUrl,
+                    width: asset.w,
+                    height: asset.h
+                });
+            }
+        }
+        setProgress(Math.floor(((i + 1) / data.assets.length) * 100));
+    }
+
+    if (extractedAssets.length === 0) {
+        alert("لم يتم العثور على صور قابلة للاستخراج في هذا الملف.");
+    } else {
+        setFrames(extractedAssets);
+    }
+    
+    setIsProcessing(false);
+    setProgress(0);
+  };
+
+  useEffect(() => {
+    if (isLottieMode && lottieData) {
+        if (lottieExtractionMode === 'sequence') {
+            extractFramesFromLottie(lottieData);
+        } else {
+            extractAssetsFromLottie(lottieData);
+        }
+    }
+  }, [lottieExtractionMode, lottieData, isLottieMode]);
+
+  const extractFramesFromLottie = async (data: any) => {
+    setIsProcessing(true);
+    setProgress(0);
+    
+    // Create a hidden canvas for high-speed rendering
+    const canvas = document.createElement('canvas');
+    canvas.width = data.w;
+    canvas.height = data.h;
+    const ctx = canvas.getContext('2d');
+
+    if (!ctx) {
+        setIsProcessing(false);
+        return;
+    }
+
+    // Use Canvas renderer for much faster extraction
+    const anim = (lottie as any).loadAnimation({
+        renderer: 'canvas',
+        loop: false,
+        autoplay: false,
+        animationData: data,
+        rendererSettings: {
+            context: ctx,
+            preserveAspectRatio: 'xMidYMid meet',
+            clearCanvas: true
+        }
+    });
+
+    // Wait for animation to be ready
+    await new Promise(resolve => {
+        if (anim.isLoaded) resolve(null);
+        else anim.addEventListener('DOMLoaded', () => resolve(null));
+    });
+
+    const totalFrames = data.op - data.ip;
+    const extractedFrames: ImageFrame[] = [];
+
+    // Optimize: Process in chunks to keep UI responsive
+    const CHUNK_SIZE = 5;
+    
+    for (let i = 0; i < totalFrames; i++) {
+        anim.goToAndStop(i + data.ip, true);
+        
+        // Canvas is updated immediately by lottie-web in canvas renderer mode
+        const blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png', 0.9));
+        
+        if (blob) {
+            const frameUrl = URL.createObjectURL(blob);
+            extractedFrames.push({
+                id: Math.random().toString(36).substr(2, 9),
+                file: new File([blob], `lottie_frame_${i}.png`, { type: 'image/png' }),
+                previewUrl: frameUrl,
+                width: data.w,
+                height: data.h
+            });
+        }
+
+        if (i % CHUNK_SIZE === 0) {
+            setProgress(Math.floor(((i + 1) / totalFrames) * 100));
+            // Yield to UI thread
+            await new Promise(r => setTimeout(r, 0));
+        }
+    }
+
+    setFrames(extractedFrames);
+    anim.destroy();
+    setIsProcessing(false);
+    setProgress(0);
   };
 
   const applyRangeSelection = () => {
@@ -852,6 +1183,89 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
     }
   };
 
+  const generateLottie = async () => {
+    if (frames.length === 0) return;
+
+    if (!currentUser) {
+      onLoginRequired();
+      return;
+    }
+
+    setIsProcessing(true);
+    setExportPhase('جاري تصدير ملف Lottie...');
+    setProgress(0);
+
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvasSize.width;
+      canvas.height = canvasSize.height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error("Could not get canvas context");
+
+      const lottieFrames: { data: string; w: number; h: number }[] = [];
+      const totalFramesCount = Math.max(1, Math.round(duration * fps));
+
+      for (let i = 0; i < totalFramesCount; i++) {
+          ctx.clearRect(0, 0, canvas.width, canvas.height);
+          
+          // Draw the frame exactly as it appears in preview
+          const resampledIndex = Math.floor((i / totalFramesCount) * frames.length);
+          const frame = frames[resampledIndex];
+          
+          const img = await new Promise<HTMLImageElement>((resolve) => {
+              const image = new Image();
+              image.onload = () => resolve(image);
+              image.src = frame.previewUrl;
+          });
+
+          const scale = Math.min(canvas.width / frame.width, canvas.height / frame.height);
+          const x = (canvas.width - frame.width * scale) / 2;
+          const y = (canvas.height - frame.height * scale) / 2;
+          ctx.drawImage(img, x, y, frame.width * scale, frame.height * scale);
+
+          // Apply Chroma Key if enabled
+          if (chromaKeyEnabled) {
+              processChromaKey(ctx, canvas.width, canvas.height);
+          }
+
+          // Apply Overlays
+          if (backgroundImage) drawOverlays(ctx, canvas.width, canvas.height, true);
+          if (watermarkImage) drawOverlays(ctx, canvas.width, canvas.height, false);
+
+          const dataUrl = canvas.toDataURL('image/png', 0.8);
+          lottieFrames.push({ data: dataUrl, w: canvas.width, h: canvas.height });
+          
+          setProgress(Math.floor(((i + 1) / totalFramesCount) * 100));
+          if (i % 10 === 0) await new Promise(r => setTimeout(r, 0));
+      }
+
+      const lottieJson = await convertFramesToLottieSequence(lottieFrames, fps);
+      
+      const blob = new Blob([JSON.stringify(lottieJson)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `animation_lottie_${Date.now()}.json`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      if (currentUser) {
+        logActivity(currentUser, 'export_lottie', `Exported Lottie from ${frames.length} frames`);
+      }
+      
+      alert("✅ تم تصدير ملف Lottie بنجاح!");
+    } catch (err) {
+      console.error("Lottie Export Error:", err);
+      alert("حدث خطأ أثناء تصدير ملف Lottie.");
+    } finally {
+      setIsProcessing(false);
+      setExportPhase('');
+      setProgress(0);
+    }
+  };
+
   return (
     <div className="max-w-7xl mx-auto p-6 sm:p-10 bg-slate-900/60 backdrop-blur-3xl rounded-[3rem] border border-white/10 shadow-3xl text-right font-sans" dir="rtl">
       <div className="flex items-center justify-between mb-10">
@@ -875,13 +1289,24 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
         {/* Left: Preview & Settings */}
         <div className="lg:col-span-5 space-y-6">
             <div className="bg-black/40 rounded-[2.5rem] border border-white/10 overflow-hidden relative aspect-square flex items-center justify-center shadow-2xl">
-                <canvas 
-                    ref={previewCanvasRef} 
-                    width={canvasSize.width} 
-                    height={canvasSize.height} 
-                    className="max-w-full max-h-full object-contain"
-                />
-                {frames.length === 0 && (
+                {isLottieMode && lottieData ? (
+                    <div className="w-full h-full flex items-center justify-center">
+                        <LottiePlayer 
+                            animationData={lottieData} 
+                            loop={isPlaying}
+                            autoplay={isPlaying}
+                            className="w-full h-full flex items-center justify-center"
+                        />
+                    </div>
+                ) : (
+                    <canvas 
+                        ref={previewCanvasRef} 
+                        width={canvasSize.width} 
+                        height={canvasSize.height} 
+                        className="max-w-full max-h-full object-contain"
+                    />
+                )}
+                {frames.length === 0 && !lottieData && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 gap-4">
                         <Images className="w-16 h-16 opacity-20" />
                         <span className="text-xs font-black uppercase tracking-widest">لا توجد صور للمعاينة</span>
@@ -1251,28 +1676,80 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
                     )}
                 </div>
 
-                <button 
-                    onClick={generateSVGA}
-                    disabled={frames.length === 0 || isProcessing}
-                    className={`w-full py-4 rounded-2xl font-black text-xs uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${frames.length === 0 || isProcessing ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-purple-500 text-white shadow-glow-purple hover:bg-purple-400 active:scale-95'}`}
-                >
-                    {isProcessing ? (
-                        <>
+                <div className="grid grid-cols-2 gap-3">
+                    <button 
+                        onClick={generateSVGA}
+                        disabled={frames.length === 0 || isProcessing}
+                        className={`py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all ${frames.length === 0 || isProcessing ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-purple-500 text-white shadow-glow-purple hover:bg-purple-400 active:scale-95'}`}
+                    >
+                        {isProcessing ? (
                             <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                            <span>جاري المعالجة {progress}%</span>
-                        </>
-                    ) : (
-                        <>
-                            <Download className="w-4 h-4" />
-                            <span>تصدير ملف SVGA</span>
-                        </>
-                    )}
-                </button>
+                        ) : (
+                            <>
+                                <Download className="w-4 h-4" />
+                                <span>تصدير SVGA</span>
+                            </>
+                        )}
+                    </button>
+
+                    <button 
+                        onClick={generateLottie}
+                        disabled={frames.length === 0 || isProcessing}
+                        className={`py-4 rounded-2xl font-black text-[10px] uppercase tracking-widest flex items-center justify-center gap-2 transition-all ${frames.length === 0 || isProcessing ? 'bg-slate-800 text-slate-600 cursor-not-allowed' : 'bg-blue-500 text-white shadow-glow-blue hover:bg-blue-400 active:scale-95'}`}
+                    >
+                        {isProcessing ? (
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                        ) : (
+                            <>
+                                <Zap className="w-4 h-4" />
+                                <span>تصدير Lottie</span>
+                            </>
+                        )}
+                    </button>
+                </div>
             </div>
         </div>
 
         {/* Right: Image List */}
         <div className="lg:col-span-7 flex flex-col gap-6">
+            {isLottieMode && (
+                <div className="bg-slate-900/60 border border-white/10 rounded-[2.5rem] p-6">
+                    <div className="flex flex-col md:flex-row items-center justify-between gap-6">
+                        <div className="text-right flex-1">
+                            <div className="flex items-center justify-end gap-3">
+                                <button 
+                                    onClick={() => {
+                                        setLottieData(null);
+                                        setIsLottieMode(false);
+                                        setFrames([]);
+                                    }}
+                                    className="text-red-500 hover:text-red-400 text-[10px] font-black uppercase"
+                                >
+                                    إلغاء وضع Lottie
+                                </button>
+                                <h3 className="text-white font-black text-lg">خيارات استخراج Lottie</h3>
+                            </div>
+                            <p className="text-slate-400 text-xs mt-1">اختر طريقة استخراج المحتوى من ملف الأنميشن</p>
+                        </div>
+                        
+                        <div className="flex bg-black/40 p-1.5 rounded-2xl border border-white/5">
+                            <button 
+                                onClick={() => setLottieExtractionMode('sequence')}
+                                className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all ${lottieExtractionMode === 'sequence' ? 'bg-purple-500 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                            >
+                                تسلسل الصور (Frames)
+                            </button>
+                            <button 
+                                onClick={() => setLottieExtractionMode('assets')}
+                                className={`px-6 py-2.5 rounded-xl text-xs font-black transition-all ${lottieExtractionMode === 'assets' ? 'bg-purple-500 text-white shadow-lg' : 'text-slate-500 hover:text-slate-300'}`}
+                            >
+                                طبقات مفككة (Assets)
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
             <div 
                 onClick={() => fileInputRef.current?.click()}
                 className="border-2 border-dashed border-white/10 hover:border-purple-500/50 hover:bg-purple-500/5 rounded-[2.5rem] p-8 flex flex-col items-center justify-center gap-4 cursor-pointer transition-all group h-48"
@@ -1280,7 +1757,7 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
                 <input 
                     type="file" 
                     multiple 
-                    accept="image/*" 
+                    accept="image/*,application/json,.json,.svga" 
                     ref={fileInputRef} 
                     className="hidden" 
                     onChange={handleFileUpload} 
@@ -1289,8 +1766,8 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
                     <Upload className="w-8 h-8 text-slate-400 group-hover:text-purple-400" />
                 </div>
                 <div className="text-center">
-                    <h3 className="text-white font-black text-sm">إضافة صور</h3>
-                    <p className="text-slate-500 text-[10px] uppercase tracking-widest mt-1">PNG, JPG, WEBP, GIF</p>
+                    <h3 className="text-white font-black text-sm">إضافة صور أو ملف Lottie أو SVGA</h3>
+                    <p className="text-slate-500 text-[10px] uppercase tracking-widest mt-1">PNG, JPG, WEBP, GIF, JSON (Lottie), SVGA</p>
                 </div>
             </div>
 
@@ -1302,6 +1779,14 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
                     </h3>
                     {frames.length > 0 && (
                         <div className="flex items-center gap-4">
+                            <button 
+                                onClick={downloadFramesAsZip}
+                                disabled={isProcessing}
+                                className="flex items-center gap-2 text-blue-400 text-[10px] font-black uppercase hover:text-blue-300 transition-colors disabled:opacity-50"
+                            >
+                                <Download className="w-3 h-3" />
+                                تحميل الكل (ZIP)
+                            </button>
                             <button 
                                 onClick={() => {
                                     setRangeStart(1);
@@ -1334,6 +1819,21 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
                                 <img src={frame.previewUrl} className="w-full h-full object-contain" />
                                 <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center gap-2">
                                     <div className="flex gap-2">
+                                        <button 
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                downloadSingleFrame(frame, index);
+                                            }}
+                                            className="p-1.5 bg-blue-500/20 text-blue-400 rounded-lg hover:bg-blue-500 hover:text-white transition-colors"
+                                            title="تحميل الإطار"
+                                        >
+                                            <Download className="w-4 h-4" />
+                                        </button>
+                                        <button onClick={() => removeFrame(frame.id)} className="p-1.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-colors">
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                    <div className="flex gap-2">
                                         <button onClick={() => moveFrame(index, 'right')} className="p-1.5 bg-white/10 rounded-lg hover:bg-white/20 text-white disabled:opacity-30" disabled={index === 0}>
                                             <ArrowRight className="w-3 h-3 rotate-180" />
                                         </button>
@@ -1341,9 +1841,6 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
                                             <ArrowRight className="w-3 h-3" />
                                         </button>
                                     </div>
-                                    <button onClick={() => removeFrame(frame.id)} className="p-1.5 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500 hover:text-white transition-colors">
-                                        <Trash2 className="w-4 h-4" />
-                                    </button>
                                 </div>
                                 <div className="absolute top-1 right-1 bg-black/60 px-1.5 rounded text-[8px] font-mono text-white/70">
                                     {index + 1}
@@ -1424,6 +1921,71 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
                                 إلغاء
                             </button>
                         </div>
+                    </div>
+                </motion.div>
+            </div>
+        )}
+      </AnimatePresence>
+
+      {/* Lottie Extraction Choice Modal */}
+      <AnimatePresence>
+        {showLottieModal && (
+            <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
+                <motion.div 
+                    initial={{ opacity: 0, scale: 0.9, y: 20 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.9, y: 20 }}
+                    className="bg-slate-900 border border-white/10 p-8 rounded-[2.5rem] w-full max-w-md shadow-3xl text-right"
+                >
+                    <div className="flex items-center gap-4 mb-6 ml-auto justify-end">
+                        <div className="text-right">
+                            <h3 className="text-xl font-black text-white">خيارات استخراج Lottie</h3>
+                            <p className="text-slate-500 text-[10px] font-bold uppercase tracking-widest">اختر طريقة معالجة الملف</p>
+                        </div>
+                        <div className="w-10 h-10 bg-blue-500/20 rounded-xl flex items-center justify-center text-blue-400">
+                            <Layers className="w-5 h-5" />
+                        </div>
+                    </div>
+
+                    <div className="space-y-4">
+                        <button 
+                            onClick={() => {
+                                setShowLottieModal(false);
+                                extractFramesFromLottie(pendingLottieData);
+                            }}
+                            className="w-full p-6 bg-white/5 hover:bg-white/10 border border-white/10 rounded-3xl text-right transition-all group"
+                        >
+                            <div className="flex items-center justify-between">
+                                <ArrowRight className="w-3 h-3 text-slate-600 group-hover:text-white transition-colors rotate-180" />
+                                <div className="text-right">
+                                    <h4 className="text-white font-black text-sm">تسلسل الصور (Animation)</h4>
+                                    <p className="text-slate-500 text-[10px] mt-1">استخراج كل إطارات الحركة كفيديو متسلسل</p>
+                                </div>
+                            </div>
+                        </button>
+
+                        <button 
+                            onClick={() => {
+                                setShowLottieModal(false);
+                                extractAssetsFromLottie(pendingLottieData);
+                            }}
+                            className="w-full p-6 bg-white/5 hover:bg-white/10 border border-white/10 rounded-3xl text-right transition-all group"
+                        >
+                            <div className="flex items-center justify-between">
+                                <ArrowRight className="w-3 h-3 text-slate-600 group-hover:text-white transition-colors rotate-180" />
+                                <div className="text-right">
+                                    <h4 className="text-white font-black text-sm">طبقات مفككة (Assets)</h4>
+                                    <p className="text-slate-500 text-[10px] mt-1">استخراج الصور الأصلية المستخدمة في الملف كقطع منفصلة</p>
+                                </div>
+                            </div>
+                        </button>
+
+                        <button 
+                            onClick={() => setShowLottieModal(false)}
+                            className="w-full py-4 text-slate-500 text-xs font-bold uppercase tracking-widest hover:text-white transition-colors"
+                        >
+                            إلغاء
+                        </button>
                     </div>
                 </motion.div>
             </div>

@@ -1,0 +1,153 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "User profile and permissions",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "isApproved": { "type": "boolean" },
+        "isVIP": { "type": "boolean" },
+        "subscriptionExpiry": { "type": "object" },
+        "subscriptionType": { "type": "string", "enum": ["day", "week", "month", "year", "none"] },
+        "status": { "type": "string", "enum": ["active", "banned", "pending"] },
+        "coins": { "type": "number" },
+        "freeAttempts": { "type": "number" },
+        "createdAt": { "type": "object" },
+        "lastLogin": { "type": "object" },
+        "lastIp": { "type": "string" },
+        "deviceId": { "type": "string" },
+        "allowedExportFormat": { "type": "string" },
+        "hasSvgaExAccess": { "type": "boolean" }
+      },
+      "required": ["id", "name", "role", "status", "coins", "freeAttempts", "createdAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Store product",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "videoUrl": { "type": "string", "format": "uri" },
+        "imageUrl": { "type": "string", "format": "uri" },
+        "supportedFormats": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "object" }
+      },
+      "required": ["id", "name", "price", "category", "createdAt"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Store category",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "order": { "type": "number" }
+      },
+      "required": ["id", "name", "order"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Store order",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "productId": { "type": "string" },
+        "productName": { "type": "string" },
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "processing", "completed", "cancelled"] },
+        "price": { "type": "number" },
+        "quantity": { "type": "number" },
+        "contactMethod": { "type": "string", "enum": ["whatsapp", "platform"] },
+        "selectedFormat": { "type": "string" },
+        "createdAt": { "type": "object" }
+      },
+      "required": ["id", "productId", "userId", "status", "price", "quantity", "createdAt"]
+    },
+    "LicenseKey": {
+      "title": "LicenseKey",
+      "description": "Subscription license key",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "key": { "type": "string" },
+        "duration": { "type": "string", "enum": ["day", "week", "month", "year"] },
+        "isUsed": { "type": "boolean" },
+        "usedBy": { "type": "string" },
+        "usedAt": { "type": "object" },
+        "createdAt": { "type": "object" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["id", "key", "duration", "isUsed", "createdAt", "createdBy"]
+    },
+    "ActivityLog": {
+      "title": "ActivityLog",
+      "description": "User activity log",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "action": { "type": "string" },
+        "details": { "type": "string" },
+        "exportFormat": { "type": "string" },
+        "ip": { "type": "string" },
+        "timestamp": { "type": "object" }
+      },
+      "required": ["userId", "userName", "action", "details", "timestamp"]
+    },
+    "AppSetting": {
+      "title": "AppSetting",
+      "description": "Global application settings",
+      "type": "object",
+      "properties": {
+        "appName": { "type": "string" },
+        "logoUrl": { "type": "string", "format": "uri" },
+        "backgroundUrl": { "type": "string", "format": "uri" },
+        "whatsappNumber": { "type": "string" },
+        "isRegistrationOpen": { "type": "boolean" },
+        "defaultFreeAttempts": { "type": "number" },
+        "isSvgaExEnabled": { "type": "boolean" },
+        "costs": { "type": "object" }
+      },
+      "required": ["appName", "whatsappNumber"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profiles"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Store products"
+    },
+    "/categories/{categoryId}": {
+      "schema": "Category",
+      "description": "Product categories"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Customer orders"
+    },
+    "/licenseKeys/{keyId}": {
+      "schema": "LicenseKey",
+      "description": "Subscription keys"
+    },
+    "/activityLogs/{logId}": {
+      "schema": "ActivityLog",
+      "description": "Audit logs"
+    },
+    "/settings/{settingId}": {
+      "schema": "AppSetting",
+      "description": "Global config"
+    }
+  }
+}
