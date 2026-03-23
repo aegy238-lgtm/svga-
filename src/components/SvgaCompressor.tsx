@@ -31,7 +31,7 @@ export const SvgaCompressor: React.FC<{ onCancel: () => void, currentUser: UserR
     if (!file) return;
 
     // Basic validation
-    if (!file.name.toLowerCase().endsWith('.svga')) {
+    if (!(file.name || '').toLowerCase().endsWith('.svga')) {
       alert('Please select a valid .svga file');
       return;
     }
@@ -185,7 +185,7 @@ export const SvgaCompressor: React.FC<{ onCancel: () => void, currentUser: UserR
 
       // 1. Identify images
       zip.forEach((relativePath: string, zipEntry: any) => {
-        if (!zipEntry.dir && relativePath.toLowerCase().endsWith('.png')) {
+        if (!zipEntry.dir && (relativePath || '').toLowerCase().endsWith('.png')) {
            // We will process this
         }
       });
@@ -194,7 +194,7 @@ export const SvgaCompressor: React.FC<{ onCancel: () => void, currentUser: UserR
       const promises: Promise<void>[] = [];
       
       zip.forEach((relativePath: string, zipEntry: any) => {
-          if (!zipEntry.dir && relativePath.toLowerCase().endsWith('.png')) {
+          if (!zipEntry.dir && (relativePath || '').toLowerCase().endsWith('.png')) {
               const promise = (async () => {
                   try {
                       const data = await zipEntry.async('blob');

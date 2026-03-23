@@ -783,7 +783,7 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
     }
   }, [status, currentFrame]);
 
-  const filteredAssets = assets.filter(a => a.id.toLowerCase().includes(searchQuery.toLowerCase()));
+  const filteredAssets = assets.filter(a => (a.id || '').toLowerCase().includes((searchQuery || '').toLowerCase()));
 
   const fps = videoItemRef.current?.FPS || 0;
   const duration = fps > 0 ? (totalFrames / fps).toFixed(2) : '0.00';

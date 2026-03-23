@@ -228,7 +228,7 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
       const newFrames: ImageFrame[] = [];
       
       for (const file of newFiles) {
-          const fileName = file.name.toLowerCase();
+          const fileName = (file.name || '').toLowerCase();
           
           // Check if it's an SVGA file
           if (fileName.endsWith('.svga')) {
@@ -314,7 +314,7 @@ export const ImageToSvga: React.FC<ImageToSvgaProps> = ({ currentUser, onCancel,
               }
           }
 
-          const isAnimated = file.type === 'image/gif' || file.type === 'image/webp' || file.name.toLowerCase().endsWith('.gif') || file.name.toLowerCase().endsWith('.webp');
+          const isAnimated = file.type === 'image/gif' || file.type === 'image/webp' || (file.name || '').toLowerCase().endsWith('.gif') || (file.name || '').toLowerCase().endsWith('.webp');
           
           if (isAnimated) {
                if (typeof ImageDecoder === 'undefined') {

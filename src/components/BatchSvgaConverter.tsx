@@ -41,7 +41,7 @@ export const BatchSvgaConverter: React.FC<BatchSvgaConverterProps> = ({ onCancel
 
   useEffect(() => {
     if (initialFiles && initialFiles.length > 0) {
-      const svgaFiles = initialFiles.filter(f => f.name.toLowerCase().endsWith('.svga'));
+      const svgaFiles = initialFiles.filter(f => (f?.name || '').toLowerCase().endsWith('.svga'));
       const newFiles: SvgaFile[] = svgaFiles.map(file => ({
         file,
         id: Math.random().toString(36).substring(2, 11) + Date.now(),
@@ -62,7 +62,7 @@ export const BatchSvgaConverter: React.FC<BatchSvgaConverterProps> = ({ onCancel
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []) as File[];
-    const svgaFiles = selectedFiles.filter(f => f.name.toLowerCase().endsWith('.svga'));
+    const svgaFiles = selectedFiles.filter(f => (f?.name || '').toLowerCase().endsWith('.svga'));
     
     const newFiles: SvgaFile[] = svgaFiles.map(file => ({
       file,

@@ -21,6 +21,7 @@ interface HeaderProps {
   onSvgaExOpen: () => void;
   onMultiSvgaOpen: () => void;
   onImageProcessorOpen: () => void;
+  onBatchImageProcessorOpen: () => void;
   onLoginClick: () => void;
   onProfileClick: () => void;
   currentTab: string;
@@ -44,6 +45,7 @@ export const Header: React.FC<HeaderProps> = ({
   onSvgaExOpen,
   onMultiSvgaOpen,
   onImageProcessorOpen,
+  onBatchImageProcessorOpen,
   onLoginClick,
   onProfileClick,
   currentTab
@@ -62,6 +64,7 @@ export const Header: React.FC<HeaderProps> = ({
       show: true
     },
     { id: 'image-processor', label: 'Image Processor', icon: <Wand2 className="w-4 h-4" />, onClick: onImageProcessorOpen },
+    { id: 'batch-image-processor', label: 'Batch Image Processor', icon: <Image className="w-4 h-4" />, onClick: onBatchImageProcessorOpen },
     { id: 'multi-svga', label: 'Multi SVGA Preview', icon: <Layers className="w-4 h-4" />, onClick: onMultiSvgaOpen },
     { id: 'converter', label: 'Video Converter', icon: <Video className="w-4 h-4" />, onClick: onConverterOpen },
     { id: 'image-converter', label: 'Image to SVGA', icon: <Image className="w-4 h-4" />, onClick: onImageConverterOpen },

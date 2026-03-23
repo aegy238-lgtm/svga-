@@ -42,7 +42,7 @@ interface WorkspaceProps {
   globalQuality?: 'low' | 'medium' | 'high';
   onFileReplace?: (meta: FileMetadata) => void;
   mode?: 'normal' | 'ex';
-  onImageConverterOpen?: () => void;
+  onImageConverterOpen?: (file?: File) => void;
 }
 
 interface CustomLayer {
@@ -324,9 +324,9 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
       try {
           let videoSrc = '';
           
-          if (file.type.startsWith('video/') || file.name.toLowerCase().endsWith('.mp4') || file.name.toLowerCase().endsWith('.webm') || file.name.toLowerCase().endsWith('.mov')) {
+          if (file.type.startsWith('video/') || (file.name || '').toLowerCase().endsWith('.mp4') || (file.name || '').toLowerCase().endsWith('.webm') || (file.name || '').toLowerCase().endsWith('.mov')) {
               videoSrc = URL.createObjectURL(file);
-          } else if (file.type.startsWith('image/') || file.name.toLowerCase().endsWith('.gif') || file.name.toLowerCase().endsWith('.webp')) {
+          } else if (file.type.startsWith('image/') || (file.name || '').toLowerCase().endsWith('.gif') || (file.name || '').toLowerCase().endsWith('.webp')) {
               // Reverted to simple object URL as per user request to remove FFmpeg conversion system
               videoSrc = URL.createObjectURL(file);
           } else {
@@ -1272,7 +1272,7 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
 
   const filteredKeys = useMemo(() => {
     return Object.keys(layerImages)
-      .filter(key => key.toLowerCase().includes(searchQuery.toLowerCase()))
+      .filter(key => (key || '').toLowerCase().includes((searchQuery || '').toLowerCase()))
       .sort((a, b) => parseInt(a.match(/\d+/)?.[0] || '0') - parseInt(b.match(/\d+/)?.[0] || '0'));
   }, [layerImages, searchQuery]);
 
@@ -6567,7 +6567,7 @@ class _MyAppState extends State<MyApp> {
                  </button>
 
                  <button 
-                   onClick={handleExportLottie}
+                   onClick={onImageConverterOpen}
                    className="flex-1 py-4 bg-orange-600 hover:bg-orange-500 text-white text-[11px] font-black rounded-xl shadow-glow-orange active:scale-95 transition-all flex items-center justify-center gap-2"
                    title="تصدير ملف Lottie (JSON)"
                  >

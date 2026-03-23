@@ -21,7 +21,7 @@ export const Login: React.FC<LoginProps> = ({ onToggle }) => {
       setLoading(true);
 
       // Check if email is banned
-      const emailDocId = email.toLowerCase().replace(/\./g, '_');
+      const emailDocId = (email || '').toLowerCase().replace(/\./g, '_');
       const bannedDoc = await getDoc(doc(db, 'banned_emails', emailDocId));
       if (bannedDoc.exists()) {
         setError('تم حظر هذا الحساب. يرجى التواصل مع الدعم الفني.');

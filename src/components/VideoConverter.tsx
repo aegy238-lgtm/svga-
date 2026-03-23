@@ -69,6 +69,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
   const [audioFile, setAudioFile] = useState<File | null>(null);
   const [removeBlack, setRemoveBlack] = useState(false);
   const [removeWhite, setRemoveWhite] = useState(false);
+  const [isVapInput, setIsVapInput] = useState(false);
   const [whiteTolerance, setWhiteTolerance] = useState(30);
   const [removeGreen, setRemoveGreen] = useState(false);
   const [removeBlue, setRemoveBlue] = useState(false);
@@ -251,6 +252,48 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
       data[i + 3] = Math.round(finalAlpha * 255);
     }
     ctx.putImageData(imageData, 0, 0);
+  };
+
+  const captureFrame = async (
+    video: HTMLVideoElement, 
+    ctx: CanvasRenderingContext2D, 
+    tCtx: CanvasRenderingContext2D, 
+    vw: number, 
+    vh: number, 
+    time: number
+  ) => {
+    video.currentTime = time;
+    await new Promise(r => {
+      const onSeek = () => { video.removeEventListener('seeked', onSeek); r(null); };
+      video.addEventListener('seeked', onSeek);
+    });
+
+    ctx.clearRect(0, 0, vw, vh);
+    tCtx.clearRect(0, 0, tCtx.canvas.width, tCtx.canvas.height);
+    tCtx.drawImage(video, 0, 0, tCtx.canvas.width, tCtx.canvas.height);
+
+    if (isVapInput) {
+      // VAP Input: Left half is Alpha, Right half is RGB
+      const alphaData = tCtx.getImageData(0, 0, vw, vh).data;
+      const rgbData = tCtx.getImageData(vw, 0, vw, vh).data;
+      const combinedData = ctx.createImageData(vw, vh);
+      const d = combinedData.data;
+
+      for (let j = 0; j < rgbData.length; j += 4) {
+        d[j] = rgbData[j];     // R
+        d[j + 1] = rgbData[j + 1]; // G
+        d[j + 2] = rgbData[j + 2]; // B
+        // Use grayscale value from alpha side as alpha
+        const alpha = (alphaData[j] + alphaData[j + 1] + alphaData[j + 2]) / 3;
+        d[j + 3] = alpha;
+      }
+      ctx.putImageData(combinedData, 0, 0);
+    } else {
+      ctx.drawImage(tCtx.canvas, 0, 0, vw, vh);
+    }
+    
+    // Apply transparency effects (Edge Fade, Chroma Key, etc.)
+    applyTransparencyEffects(ctx, vw, vh);
   };
 
   useEffect(() => {
@@ -691,18 +734,15 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     canvas.width = safeWidth; canvas.height = safeHeight;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-    for (let i = 0; i < totalFrames; i++) {
-        video.currentTime = startTime + (i / fps);
-        await new Promise(r => {
-            const onSeek = () => { video.removeEventListener('seeked', onSeek); r(null); };
-            video.addEventListener('seeked', onSeek);
-        });
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = isVapInput ? safeWidth * 2 : safeWidth;
+    tempCanvas.height = safeHeight;
+    const tCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
 
-        if (ctx) {
+    for (let i = 0; i < totalFrames; i++) {
+        if (ctx && tCtx) {
             if (hasEncoderError) break;
-            ctx.clearRect(0, 0, safeWidth, safeHeight);
-            ctx.drawImage(video, 0, 0, safeWidth, safeHeight);
-            applyTransparencyEffects(ctx, safeWidth, safeHeight);
+            await captureFrame(video, ctx, tCtx, safeWidth, safeHeight, startTime + (i / fps));
             
             const bitmap = await createImageBitmap(canvas);
             const frame = new VideoFrame(bitmap, { timestamp: (i * 1000000) / fps });
@@ -1060,18 +1100,15 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     canvas.width = vw; canvas.height = vh;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-    for (let i = 0; i < totalFrames; i++) {
-        video.currentTime = startTime + (i / fps);
-        await new Promise(r => {
-            const onSeek = () => { video.removeEventListener('seeked', onSeek); r(null); };
-            video.addEventListener('seeked', onSeek);
-        });
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = isVapInput ? vw * 2 : vw;
+    tempCanvas.height = vh;
+    const tCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
 
-        if (ctx) {
+    for (let i = 0; i < totalFrames; i++) {
+        if (ctx && tCtx) {
             if (hasEncoderError) break;
-            ctx.clearRect(0, 0, vw, vh);
-            ctx.drawImage(video, 0, 0, vw, vh);
-            applyTransparencyEffects(ctx, vw, vh);
+            await captureFrame(video, ctx, tCtx, vw, vh, startTime + (i / fps));
             
             const bitmap = await createImageBitmap(canvas);
             const frame = new VideoFrame(bitmap, { timestamp: (i * 1000000) / fps });
@@ -1114,20 +1151,17 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     canvas.width = vw; canvas.height = vh;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
     
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = isVapInput ? vw * 2 : vw;
+    tempCanvas.height = vh;
+    const tCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+    
     const frames: { data: Uint8Array, duration: number }[] = [];
 
     // 1. Capture Frames
     for (let i = 0; i < totalFrames; i++) {
-        video.currentTime = startTime + (i / fps);
-        await new Promise(r => {
-            const onSeek = () => { video.removeEventListener('seeked', onSeek); r(null); };
-            video.addEventListener('seeked', onSeek);
-        });
-
-        if (ctx) {
-            ctx.clearRect(0, 0, vw, vh);
-            ctx.drawImage(video, 0, 0, vw, vh);
-            applyTransparencyEffects(ctx, vw, vh);
+        if (ctx && tCtx) {
+            await captureFrame(video, ctx, tCtx, vw, vh, startTime + (i / fps));
             
             const base64 = canvas.toDataURL('image/webp', globalQuality === 'high' ? 0.9 : globalQuality === 'medium' ? 0.75 : 0.5);
             const binary = atob(base64.split(',')[1]);
@@ -1447,8 +1481,11 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     if (isNaN(vw) || vw <= 0) vw = 1334;
     if (isNaN(vh) || vh <= 0) vh = 750;
 
+    const actualWidth = isVapInput ? Math.floor(vw / 2) : vw;
+    const actualHeight = vh;
+
     setPhase('جاري إنشاء ملف SVGA...');
-    console.log(`Starting SVGA export: ${vw}x${vh}, ${totalFrames} frames, ${fps} fps`);
+    console.log(`Starting SVGA export: ${actualWidth}x${actualHeight}, ${totalFrames} frames, ${fps} fps (VAP Input: ${isVapInput})`);
     
     try {
       const protoStr = `
@@ -1536,80 +1573,57 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         });
       }
 
-      // Pre-create invisible frame to save memory (shared reference)
-      const invisibleFrame = {
-        alpha: 0.0,
-        layout: { x: 0, y: 0, width: vw, height: vh },
-        transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
-      };
-
       const canvas = document.createElement('canvas');
-      canvas.width = vw;
-      canvas.height = vh;
+      canvas.width = actualWidth;
+      canvas.height = actualHeight;
       const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
-      let lastImageKey = "";
-      let lastImageHash = "";
+      const tempCanvas = document.createElement('canvas');
+      tempCanvas.width = vw;
+      tempCanvas.height = vh;
+      const tCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+
+      const spriteFrames: any[] = [];
 
       for (let i = 0; i < totalFrames; i++) {
-        video.currentTime = startTime + (i / fps);
-        await new Promise(r => {
-          const onSeek = () => { video.removeEventListener('seeked', onSeek); r(null); };
-          video.addEventListener('seeked', onSeek);
-        });
+        await captureFrame(video, ctx, tCtx, actualWidth, actualHeight, startTime + (i / fps));
         
-        if (ctx) {
-          ctx.clearRect(0, 0, vw, vh);
-          ctx.drawImage(video, 0, 0, vw, vh);
-          applyTransparencyEffects(ctx, vw, vh);
-          
-          // Use UPNG for extreme lossy compression if quality is below 100
-          let bytes: Uint8Array;
-          if (compressionQuality < 100) {
-            const imageData = ctx.getImageData(0, 0, vw, vh);
-            // UPNG.encode(rgba, w, h, cnum) - cnum is number of colors for lossy compression
-            // We map 1-100 quality to 2-256 colors
-            const colors = Math.max(2, Math.round((compressionQuality / 100) * 256));
-            const apng = UPNG.encode([imageData.data.buffer], vw, vh, colors);
-            bytes = new Uint8Array(apng);
-          } else {
-            const base64 = canvas.toDataURL('image/png');
-            try {
-              const response = await fetch(base64);
-              const blob = await response.blob();
-              const arrayBuffer = await blob.arrayBuffer();
-              bytes = new Uint8Array(arrayBuffer);
-            } catch (e) {
-              const binary = atob(base64.split(',')[1]);
-              bytes = new Uint8Array(binary.length);
-              for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
-            }
+        // Use UPNG for extreme lossy compression if quality is below 100
+        let bytes: Uint8Array;
+        if (compressionQuality < 100) {
+          const imageData = ctx.getImageData(0, 0, actualWidth, actualHeight);
+          const colors = Math.max(2, Math.round((compressionQuality / 100) * 256));
+          const apng = UPNG.encode([imageData.data.buffer], actualWidth, actualHeight, colors);
+          bytes = new Uint8Array(apng);
+        } else {
+          const base64 = canvas.toDataURL('image/png');
+          try {
+            const response = await fetch(base64);
+            const blob = await response.blob();
+            const arrayBuffer = await blob.arrayBuffer();
+            bytes = new Uint8Array(arrayBuffer);
+          } catch (e) {
+            const binary = atob(base64.split(',')[1]);
+            bytes = new Uint8Array(binary.length);
+            for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
           }
-          
-          let currentKey = `img_${i}`;
-          // For lossy compression, exact hash matching is less likely, but we still try
-          const currentHash = bytes.length.toString() + bytes[0].toString() + bytes[bytes.length-1].toString(); 
-          
-          if (currentHash === lastImageHash) {
-            currentKey = lastImageKey;
-          } else {
-            imagesData[currentKey] = bytes;
-            lastImageKey = currentKey;
-            lastImageHash = currentHash;
-          }
-
-          const frames = new Array(totalFrames).fill(invisibleFrame);
-          frames[i] = {
-            alpha: 1.0,
-            layout: { x: 0, y: 0, width: vw, height: vh },
-            transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
-          };
-
-          finalSprites.push({
-            imageKey: currentKey,
-            frames: frames
-          });
         }
+        
+        const currentKey = `img_${i}`;
+        imagesData[currentKey] = bytes;
+
+        spriteFrames.push({
+          alpha: 1.0,
+          layout: { x: 0, y: 0, width: actualWidth, height: actualHeight },
+          transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
+        });
+
+        // In this optimized version, we create one sprite per frame to keep it simple but correct
+        // Actually, standard SVGA usually has one sprite per image key.
+        finalSprites.push({
+          imageKey: currentKey,
+          frames: new Array(totalFrames).fill({ alpha: 0 }).map((f, idx) => idx === i ? spriteFrames[i] : f)
+        });
         
         if (i % 5 === 0) {
           setProgress(Math.floor((i / totalFrames) * 100));
@@ -1619,7 +1633,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
 
       const payload = { 
         version: "2.0", 
-        params: { viewBoxWidth: vw, viewBoxHeight: vh, fps, frames: totalFrames }, 
+        params: { viewBoxWidth: actualWidth, viewBoxHeight: actualHeight, fps, frames: totalFrames }, 
         images: imagesData, 
         sprites: finalSprites,
         audios: finalAudios
@@ -1683,16 +1697,14 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     canvas.width = vw; canvas.height = vh;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = isVapInput ? vw * 2 : vw;
+    tempCanvas.height = vh;
+    const tCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+
     for (let i = 0; i < totalFrames; i++) {
-      video.currentTime = startTime + (i / fps);
-      await new Promise(r => {
-        const onSeek = () => { video.removeEventListener('seeked', onSeek); r(null); };
-        video.addEventListener('seeked', onSeek);
-      });
-      if (ctx) {
-        ctx.clearRect(0, 0, vw, vh);
-        ctx.drawImage(video, 0, 0, vw, vh);
-        applyTransparencyEffects(ctx, vw, vh);
+      if (ctx && tCtx) {
+        await captureFrame(video, ctx, tCtx, vw, vh, startTime + (i / fps));
         gif.addFrame(ctx, { copy: true, delay: 1000 / fps });
       }
       setProgress(Math.floor((i / totalFrames) * 50));
@@ -1718,16 +1730,14 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
     canvas.width = vw; canvas.height = vh;
     const ctx = canvas.getContext('2d', { willReadFrequently: true });
 
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = isVapInput ? vw * 2 : vw;
+    tempCanvas.height = vh;
+    const tCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+
     for (let i = 0; i < totalFrames; i++) {
-      video.currentTime = startTime + (i / fps);
-      await new Promise(r => {
-        const onSeek = () => { video.removeEventListener('seeked', onSeek); r(null); };
-        video.addEventListener('seeked', onSeek);
-      });
-      if (ctx) {
-        ctx.clearRect(0, 0, vw, vh);
-        ctx.drawImage(video, 0, 0, vw, vh);
-        applyTransparencyEffects(ctx, vw, vh);
+      if (ctx && tCtx) {
+        await captureFrame(video, ctx, tCtx, vw, vh, startTime + (i / fps));
         framesData.push(ctx.getImageData(0, 0, vw, vh).data.buffer);
         delays.push(1000 / fps);
       }
@@ -1778,7 +1788,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
               type="file" 
               ref={fileInputRef} 
               className="hidden" 
-              accept="video/mp4" 
+              accept="video/*,.vap" 
               multiple
               onChange={(e) => {
                 const newFiles = Array.from(e.target.files || []);
@@ -2194,6 +2204,22 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
                     </div>
                 </div>
                 </button>
+
+                <button 
+                onClick={() => setIsVapInput(!isVapInput)}
+                className={`w-full p-5 rounded-2xl border transition-all flex items-center justify-between group ${isVapInput ? 'bg-sky-500/10 border-sky-500/30 text-sky-400' : 'bg-white/5 border-white/5 text-slate-500'}`}
+                >
+                <div className="flex items-center gap-3">
+                    <Video className={`w-5 h-5 transition-colors ${isVapInput ? 'text-sky-400' : 'text-slate-500'}`} />
+                    <span className="font-black text-xs uppercase tracking-widest">فيديو VAP (مدخل)</span>
+                </div>
+                <div className={`w-10 h-5 rounded-full relative transition-colors ${isVapInput ? 'bg-sky-500' : 'bg-slate-700'}`}>
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${isVapInput ? 'right-6' : 'right-1'}`}></div>
+                </div>
+                </button>
+                <p className="text-[9px] text-slate-500 mt-2 text-right px-2">
+                    {isVapInput && "تفعيل هذا الخيار إذا كان الفيديو المدخل بتنسيق VAP (نصف شفاف ونصف ألوان)."}
+                </p>
             </div>
 
             {/* Universal Tolerance Slider */}

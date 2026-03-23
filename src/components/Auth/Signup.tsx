@@ -32,7 +32,7 @@ export const Signup: React.FC<SignupProps> = ({ onToggle }) => {
       setLoading(true);
 
       // Check if email is banned
-      const emailDocId = email.toLowerCase().replace(/\./g, '_');
+      const emailDocId = (email || '').toLowerCase().replace(/\./g, '_');
       const bannedDoc = await getDoc(doc(db, 'banned_emails', emailDocId));
       if (bannedDoc.exists()) {
         throw new Error('عذراً، هذا البريد الإلكتروني محظور من إنشاء حسابات جديدة.');

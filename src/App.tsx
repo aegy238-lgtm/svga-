@@ -8,6 +8,7 @@ import { VideoConverter } from './components/VideoConverter';
 import { MultiSvgaViewer } from './components/MultiSvgaViewer';
 import { ImageToSvga } from './components/ImageToSvga';
 import { ImageProcessor } from './components/ImageProcessor';
+import { BatchImageProcessor } from './components/BatchImageProcessor';
 import { ImageEditor } from './components/ImageEditor';
 import { ImageMatcher } from './components/ImageMatcher';
 import { Store } from './components/Store';
@@ -86,11 +87,16 @@ const App: React.FC = () => {
     setState(targetState);
   };
 
+  const handleImageConverterOpen = (file?: File) => {
+    if (file) setInitialLottieFile(file);
+    handleFeatureAccess(AppState.IMAGE_CONVERTER, 'Image Converter');
+  };
+
   const handleFileUpload = useCallback(async (files: File[]) => {
     if (files.length === 0) return;
 
     if (files.length > 1) {
-      const svgaFiles = files.filter(f => f.name.toLowerCase().endsWith('.svga'));
+      const svgaFiles = files.filter(f => (f?.name || '').toLowerCase().endsWith('.svga'));
       if (svgaFiles.length > 0) {
         // Multiple SVGA files uploaded - we'll just process the first one for now
         // since Batch SVGA Converter was removed.
@@ -130,7 +136,7 @@ const App: React.FC = () => {
     const fileUrl = URL.createObjectURL(file);
 
     // Check for Lottie JSON
-    if (file.name.toLowerCase().endsWith('.json') || file.type === 'application/json') {
+    if ((file?.name || '').toLowerCase().endsWith('.json') || file?.type === 'application/json') {
         try {
             const text = await file.text();
             const json = JSON.parse(text);
@@ -150,12 +156,12 @@ const App: React.FC = () => {
       logActivity(currentUser, 'upload', `Uploaded file: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
     }
 
-    const isVideo = file.type.startsWith('video/') || file.name.toLowerCase().endsWith('.mp4') || file.name.toLowerCase().endsWith('.webm') || file.name.toLowerCase().endsWith('.mov');
+    const isVideo = file?.type?.startsWith('video/') || (file?.name || '').toLowerCase().endsWith('.mp4') || (file?.name || '').toLowerCase().endsWith('.webm') || (file?.name || '').toLowerCase().endsWith('.mov');
     const isImage = false; // Disabled image support
 
     if (isVideo || isImage) {
         // For simple MP4/WebM, try to extract frames immediately
-        if (file.name.toLowerCase().endsWith('.mp4') || file.name.toLowerCase().endsWith('.webm')) {
+        if ((file?.name || '').toLowerCase().endsWith('.mp4') || (file?.name || '').toLowerCase().endsWith('.webm')) {
             try {
                const video = document.createElement('video');
                video.src = fileUrl;
@@ -272,7 +278,7 @@ const App: React.FC = () => {
         return;
     }
 
-    if (!file || !file.name.toLowerCase().endsWith('.svga')) return;
+    if (!file || !(file?.name || '').toLowerCase().endsWith('.svga')) return;
     
     try {
       const parser = new SVGA.Parser();
@@ -344,13 +350,14 @@ const App: React.FC = () => {
         onBatchOpen={() => handleFeatureAccess(AppState.BATCH_COMPRESSOR, 'Batch Compressor')}
         onStoreOpen={() => setState(AppState.STORE)}
         onConverterOpen={() => handleFeatureAccess(AppState.VIDEO_CONVERTER, 'Video Converter')}
-        onImageConverterOpen={() => handleFeatureAccess(AppState.IMAGE_CONVERTER, 'Image Converter')}
+        onImageConverterOpen={() => handleImageConverterOpen()}
         onImageEditorOpen={() => handleFeatureAccess(AppState.IMAGE_EDITOR, 'Image Editor')}
         onImageMatcherOpen={() => handleFeatureAccess(AppState.IMAGE_MATCHER, 'Image Matcher')}
         onCropperOpen={() => handleFeatureAccess(AppState.BATCH_CROPPER, 'Batch Cropper')}
         onSvgaExOpen={() => handleFeatureAccess(AppState.SVGA_EDITOR_EX, 'SVGA Editor EX')}
         onMultiSvgaOpen={() => handleFeatureAccess(AppState.MULTI_SVGA_VIEWER, 'Multi SVGA Preview')}
         onImageProcessorOpen={() => handleFeatureAccess(AppState.IMAGE_PROCESSOR, 'Image Processor')}
+        onBatchImageProcessorOpen={() => handleFeatureAccess(AppState.BATCH_IMAGE_PROCESSOR, 'Batch Image Processor')}
         onLoginClick={() => {}}
         onProfileClick={() => {}}
         currentTab={
@@ -359,6 +366,7 @@ const App: React.FC = () => {
           state === AppState.VIDEO_CONVERTER ? 'converter' : 
           state === AppState.IMAGE_CONVERTER ? 'image-converter' :
           state === AppState.IMAGE_PROCESSOR ? 'image-processor' :
+          state === AppState.BATCH_IMAGE_PROCESSOR ? 'batch-image-processor' :
           state === AppState.IMAGE_EDITOR ? 'image-editor' :
           state === AppState.IMAGE_MATCHER ? 'image-matcher' :
           state === AppState.BATCH_CROPPER ? 'cropper' :
@@ -395,7 +403,7 @@ const App: React.FC = () => {
                 globalQuality={globalQuality}
                 onFileReplace={(meta) => setFileMetadata(meta)}
                 mode={state === AppState.SVGA_EDITOR_EX ? 'ex' : 'normal'}
-                onImageConverterOpen={() => handleFeatureAccess(AppState.IMAGE_CONVERTER, 'Image Converter')}
+                onImageConverterOpen={handleImageConverterOpen}
               />
             )}
             {state === AppState.BATCH_COMPRESSOR && (
@@ -433,6 +441,9 @@ const App: React.FC = () => {
                 currentUser={currentUser} 
                 onCancel={handleReset} 
               />
+            )}
+            {state === AppState.BATCH_IMAGE_PROCESSOR && (
+              <BatchImageProcessor onCancel={handleReset} />
             )}
             {state === AppState.IMAGE_EDITOR && (
               <ImageEditor 

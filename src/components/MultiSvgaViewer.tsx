@@ -126,7 +126,7 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
     const newItems: MultiSvgaItem[] = [];
     
     for (const file of Array.from(files)) {
-      if (!file.name.toLowerCase().endsWith('.svga')) continue;
+      if (!(file?.name || '').toLowerCase().endsWith('.svga')) continue;
       
       const url = URL.createObjectURL(file);
       

@@ -132,10 +132,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
       
       // Also track in banned_emails to prevent re-registration
       if (user.email) {
-        const emailDocId = user.email.toLowerCase().replace(/\./g, '_');
+        const emailDocId = (user.email || '').toLowerCase().replace(/\./g, '_');
         if (newStatus === 'banned') {
           await setDoc(doc(db, 'banned_emails', emailDocId), {
-            email: user.email.toLowerCase(),
+            email: (user.email || '').toLowerCase(),
             userId: user.id,
             bannedAt: Timestamp.now()
           });
