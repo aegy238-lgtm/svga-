@@ -322,16 +322,19 @@ const App: React.FC = () => {
     return <Loading />;
   }
 
-  const dynamicBgStyle: React.CSSProperties = settings?.backgroundUrl ? {
-    backgroundImage: `linear-gradient(rgba(2, 6, 23, 0.4), rgba(2, 6, 23, 0.4)), url(${settings.backgroundUrl})`,
+  const defaultBgUrl = 'https://images.unsplash.com/photo-1634017839464-5c339ebe3cb4?q=80&w=2070&auto=format&fit=crop';
+  const bgUrl = settings?.backgroundUrl || defaultBgUrl;
+
+  const dynamicBgStyle: React.CSSProperties = {
+    backgroundImage: `linear-gradient(rgba(2, 6, 23, 0.8), rgba(2, 6, 23, 0.9)), url(${bgUrl})`,
     backgroundSize: 'cover',
     backgroundPosition: 'center',
     backgroundAttachment: 'fixed'
-  } : {};
+  };
 
   return (
     <div className="min-h-screen text-slate-200 overflow-x-hidden relative" style={dynamicBgStyle}>
-      {!settings?.backgroundUrl && <div className="fixed inset-0 bg-[#020617] -z-10" />}
+      <div className="fixed inset-0 bg-[#020617]/30 backdrop-blur-[4px] -z-10 pointer-events-none" />
       
       {isQuotaExceeded && (
         <div className="fixed top-0 left-0 right-0 bg-amber-500/90 backdrop-blur-sm text-black py-1 px-4 text-center text-[10px] font-bold z-[300] flex items-center justify-center gap-2">
