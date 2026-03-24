@@ -1,7 +1,5 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
-import { doc, getDoc } from 'firebase/firestore';
-import { db } from '../../lib/firebase';
 
 interface LoginProps {
   onToggle: () => void;
@@ -19,16 +17,6 @@ export const Login: React.FC<LoginProps> = ({ onToggle }) => {
     try {
       setError('');
       setLoading(true);
-
-      // Check if email is banned
-      const emailDocId = (email || '').toLowerCase().replace(/\./g, '_');
-      const bannedDoc = await getDoc(doc(db, 'banned_emails', emailDocId));
-      if (bannedDoc.exists()) {
-        setError('تم حظر هذا الحساب. يرجى التواصل مع الدعم الفني.');
-        setLoading(false);
-        return;
-      }
-
       await login(email, password);
     } catch (err: any) {
       console.error("Login Error:", err);

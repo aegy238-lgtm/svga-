@@ -15,11 +15,6 @@ async function startServer() {
     res.json({ status: "ok" });
   });
 
-  app.get("/api/ip", (req, res) => {
-    const ip = req.headers['x-forwarded-for'] || req.socket.remoteAddress;
-    res.json({ ip });
-  });
-
   // Vite middleware for development
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

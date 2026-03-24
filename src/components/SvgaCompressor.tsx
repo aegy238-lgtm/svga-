@@ -2,9 +2,10 @@ import React, { useState, useRef } from 'react';
 import { UserRecord } from '../types';
 import { parse } from 'protobufjs';
 import pako from 'pako';
-import { svgaSchema } from '../svga-proto';
 
 declare var JSZip: any;
+
+const PROTO_SCHEMA = `syntax="proto3";package com.opensource.svga;message MovieParams{float viewBoxWidth=1;float viewBoxHeight=2;int32 fps=3;int32 frames=4;}message Transform{float a=1;float b=2;float c=3;float d=4;float tx=5;float ty=6;}message Layout{float x=1;float y=2;float width=3;float height=4;}message SpriteEntity{string imageKey=1;repeated FrameEntity frames=2;string matteKey=3;}message FrameEntity{float alpha=1;Layout layout=2;Transform transform=3;string clipPath=4;repeated ShapeEntity shapes=5;string blendMode=6;}message ShapeEntity{int32 type=1;map<string,float> args=2;map<string,string> styles=3;Transform transform=4;}message AudioEntity{string audioKey=1;int32 startFrame=2;int32 endFrame=3;int32 startTime=4;int32 totalTime=5;}message MovieEntity{string version=1;MovieParams params=2;map<string, bytes> images=3;repeated SpriteEntity sprites=4;repeated AudioEntity audios=5;}`;
 
 interface SvgaFile {
   file: File;
@@ -31,7 +32,7 @@ export const SvgaCompressor: React.FC<{ onCancel: () => void, currentUser: UserR
     if (!file) return;
 
     // Basic validation
-    if (!(file.name || '').toLowerCase().endsWith('.svga')) {
+    if (!file.name.toLowerCase().endsWith('.svga')) {
       alert('Please select a valid .svga file');
       return;
     }
@@ -132,7 +133,7 @@ export const SvgaCompressor: React.FC<{ onCancel: () => void, currentUser: UserR
              throw new Error("Invalid SVGA file format. Not a valid Zip archive or SVGA binary.");
           }
 
-          const parsed = parse(svgaSchema);
+          const parsed = parse(PROTO_SCHEMA);
           const root = parsed.root;
           const MovieEntity = root.lookupType("com.opensource.svga.MovieEntity");
           
@@ -185,7 +186,7 @@ export const SvgaCompressor: React.FC<{ onCancel: () => void, currentUser: UserR
 
       // 1. Identify images
       zip.forEach((relativePath: string, zipEntry: any) => {
-        if (!zipEntry.dir && (relativePath || '').toLowerCase().endsWith('.png')) {
+        if (!zipEntry.dir && relativePath.toLowerCase().endsWith('.png')) {
            // We will process this
         }
       });
@@ -194,7 +195,7 @@ export const SvgaCompressor: React.FC<{ onCancel: () => void, currentUser: UserR
       const promises: Promise<void>[] = [];
       
       zip.forEach((relativePath: string, zipEntry: any) => {
-          if (!zipEntry.dir && (relativePath || '').toLowerCase().endsWith('.png')) {
+          if (!zipEntry.dir && relativePath.toLowerCase().endsWith('.png')) {
               const promise = (async () => {
                   try {
                       const data = await zipEntry.async('blob');

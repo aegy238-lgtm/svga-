@@ -2,20 +2,20 @@
 import React, { useState } from 'react';
 
 interface UploaderProps {
-  onUpload: (files: File[]) => void;
+  onUpload: (file: File) => void;
   isUploading: boolean;
   onConverterOpen?: () => void;
-  onMultiSvgaOpen?: () => void;
   globalQuality?: 'low' | 'medium' | 'high';
   setGlobalQuality?: (q: 'low' | 'medium' | 'high') => void;
+  title?: string;
 }
 
-export const Uploader: React.FC<UploaderProps> = ({ onUpload, isUploading, onConverterOpen, onMultiSvgaOpen, globalQuality = 'high', setGlobalQuality }) => {
+export const Uploader: React.FC<UploaderProps> = ({ onUpload, isUploading, onConverterOpen, globalQuality = 'high', setGlobalQuality, title }) => {
   const [isDragOver, setIsDragOver] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      onUpload(Array.from(e.target.files));
+    if (e.target.files && e.target.files[0]) {
+      onUpload(e.target.files[0]);
     }
   };
 
@@ -31,14 +31,14 @@ export const Uploader: React.FC<UploaderProps> = ({ onUpload, isUploading, onCon
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
-    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      onUpload(Array.from(e.dataTransfer.files));
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      onUpload(e.dataTransfer.files[0]);
     }
   };
 
   return (
     <div 
-      className={`relative max-w-5xl mx-auto min-h-[350px] sm:h-[450px] rounded-3xl sm:rounded-[4rem] border-2 border-dashed transition-all duration-500 flex flex-col items-center justify-center gap-6 sm:gap-10 p-6 sm:p-12 cursor-pointer shadow-3xl overflow-hidden
+      className={`relative max-w-5xl mx-auto h-[450px] rounded-[4rem] border-2 border-dashed transition-all duration-500 flex flex-col items-center justify-center gap-10 p-12 cursor-pointer shadow-3xl overflow-hidden
         ${isDragOver ? 'border-sky-500 bg-sky-500/10 scale-[1.01] shadow-glow-sky' : 'border-slate-800 bg-slate-900/40 hover:border-slate-700 hover:bg-slate-900/60'}
       `}
       onDragOver={handleDragOver}
@@ -49,10 +49,9 @@ export const Uploader: React.FC<UploaderProps> = ({ onUpload, isUploading, onCon
       <input 
         id="file-input"
         type="file" 
-        accept=".svga,.mp4,.webm,.mov,.json,application/json"
+        accept=".svga,.mp4,.webm,.mov"
         className="hidden"
         onChange={handleFileChange}
-        multiple
       />
 
       <div className="absolute -top-24 -left-24 w-64 h-64 bg-sky-500/5 blur-[100px] rounded-full"></div>
@@ -60,38 +59,31 @@ export const Uploader: React.FC<UploaderProps> = ({ onUpload, isUploading, onCon
       
       <div className="relative group">
          <div className="absolute inset-0 bg-sky-500 blur-2xl opacity-20 group-hover:opacity-40 transition-opacity"></div>
-         <div className="relative w-20 h-20 sm:w-28 sm:h-28 bg-slate-950 rounded-2xl sm:rounded-3xl flex items-center justify-center text-sky-400 border border-white/10 shadow-2xl transition-transform duration-500 group-hover:scale-110">
-            <svg className="w-10 h-10 sm:w-12 sm:h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+         <div className="relative w-28 h-28 bg-slate-950 rounded-3xl flex items-center justify-center text-sky-400 border border-white/10 shadow-2xl transition-transform duration-500 group-hover:scale-110">
+            <svg className="w-12 h-12" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
             </svg>
          </div>
       </div>
       
-      <div className="text-center relative z-10 px-4">
-        <h3 className="text-2xl sm:text-4xl font-black text-white mb-3 tracking-tighter uppercase">Quantum SVGA Processor</h3>
-        <p className="text-slate-500 font-black uppercase tracking-[0.2em] sm:tracking-[0.4em] text-[8px] sm:text-[10px]">اضغط أو اسحب الملف للدخول إلى مساحة العمل</p>
+      <div className="text-center relative z-10">
+        <h3 className="text-4xl font-black text-white mb-3 tracking-tighter uppercase">{title || 'Quantum SVGA Processor'}</h3>
+        <p className="text-slate-500 font-black uppercase tracking-[0.4em] text-[10px]">اضغط أو اسحب الملف للدخول إلى مساحة العمل</p>
       </div>
 
 
 
-      <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 relative z-10 w-full sm:w-auto px-4 sm:px-0">
-        <div className="flex items-center justify-center gap-3 px-6 py-3 bg-white/5 rounded-xl sm:rounded-2xl border border-white/10">
+      <div className="flex flex-col sm:flex-row gap-4 relative z-10">
+        <div className="flex items-center gap-3 px-6 py-3 bg-white/5 rounded-2xl border border-white/10">
            <div className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse"></div>
            <span className="text-[10px] text-slate-400 font-black uppercase tracking-widest">SVGA 1.0 / 2.0</span>
         </div>
         <button 
           onClick={(e) => { e.stopPropagation(); onConverterOpen?.(); }}
-          className="flex items-center justify-center gap-3 px-6 py-3 bg-sky-500/10 hover:bg-sky-500/20 rounded-xl sm:rounded-2xl border border-sky-500/20 transition-all group/btn"
+          className="flex items-center gap-3 px-6 py-3 bg-sky-500/10 hover:bg-sky-500/20 rounded-2xl border border-sky-500/20 transition-all group/btn"
         >
            <span className="text-xl group-hover/btn:scale-110 transition-transform">⚡</span>
            <span className="text-[10px] text-sky-400 font-black uppercase tracking-widest">محول الفيديو المباشر</span>
-        </button>
-        <button 
-          onClick={(e) => { e.stopPropagation(); onMultiSvgaOpen?.(); }}
-          className="flex items-center justify-center gap-3 px-6 py-3 bg-indigo-500/10 hover:bg-indigo-500/20 rounded-xl sm:rounded-2xl border border-indigo-500/20 transition-all group/btn"
-        >
-           <span className="text-xl group-hover/btn:scale-110 transition-transform">🖼️</span>
-           <span className="text-[10px] text-indigo-400 font-black uppercase tracking-widest">معاينة متعددة</span>
         </button>
       </div>
       

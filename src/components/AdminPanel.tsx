@@ -3,30 +3,24 @@ import { UserRecord, AppSettings, LicenseKey, PresetBackground, SubscriptionType
 import { db, storage } from '../lib/firebase';
 import { collection, getDocs, doc, updateDoc, addDoc, deleteDoc, query, orderBy, Timestamp, setDoc, getDoc, limit } from 'firebase/firestore';
 import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { StoreManager } from './StoreManager';
-import { Users, Key, Image as ImageIcon, Settings as SettingsIcon, Trash2, Ban, CheckCircle, Upload, RefreshCw, X, FileText, Link as LinkIcon, BadgeCheck, Wifi, Smartphone, Store } from 'lucide-react';
+import { Users, Key, Image as ImageIcon, Settings as SettingsIcon, Trash2, Ban, CheckCircle, Upload, RefreshCw, X, FileText, Link as LinkIcon, BadgeCheck } from 'lucide-react';
 
 interface AdminPanelProps {
   currentUser: UserRecord | null;
   onCancel: () => void;
 }
 
-const EXPORT_FORMATS = ['AE Project', 'SVGA 2.0 EX', 'SVGA 2.0', 'Image Sequence', 'GIF (Animation)', 'APNG (Animation)', 'WebM (Video)', 'WebP (Animated)', 'VAP 1.0.5', 'VAP (MP4)'];
+const EXPORT_FORMATS = ['AE Project', 'SVGA 2.0', 'Image Sequence', 'GIF (Animation)', 'APNG (Animation)', 'WebM (Video)', 'WebP (Animated)', 'VAP 1.0.5', 'VAP (MP4)'];
 
 export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel }) => {
   const [activeTab, setActiveTab] = useState<'users' | 'keys' | 'assets' | 'settings' | 'records'>('users');
   const [dropdownState, setDropdownState] = useState<{ userId: string; x: number; y: number; position: 'top' | 'bottom' } | null>(null);
   const [loading, setLoading] = useState(false);
   const [users, setUsers] = useState<UserRecord[]>([]);
-  const [bannedIps, setBannedIps] = useState<string[]>([]);
-  const [bannedDevices, setBannedDevices] = useState<string[]>([]);
   const [keys, setKeys] = useState<LicenseKey[]>([]);
   const [backgrounds, setBackgrounds] = useState<PresetBackground[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [logs, setLogs] = useState<ActivityLog[]>([]);
-  const [cache, setCache] = useState<Record<string, { data: any, timestamp: number }>>({});
-
-  const CACHE_DURATION = 30000; // 30 seconds
 
   // URL Input States
   const [logoUrlInput, setLogoUrlInput] = useState('');
@@ -39,82 +33,40 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
   }, [activeTab]);
 
   const fetchData = async () => {
-    const now = Date.now();
-    if (cache[activeTab] && (now - cache[activeTab].timestamp) < CACHE_DURATION) {
-      const cached = cache[activeTab].data;
-      if (activeTab === 'users') {
-        setUsers(cached.users);
-        setBannedIps(cached.bannedIps);
-        setBannedDevices(cached.bannedDevices);
-      } else if (activeTab === 'keys') {
-        setKeys(cached);
-      } else if (activeTab === 'assets') {
-        setBackgrounds(cached.backgrounds);
-        setSettings(cached.settings);
-        setLogoUrlInput(cached.settings.logoUrl || '');
-        setBgUrlInput(cached.settings.backgroundUrl || '');
-      } else if (activeTab === 'settings') {
-        setSettings(cached);
-      } else if (activeTab === 'records') {
-        setLogs(cached);
-      }
-      return;
-    }
-
     setLoading(true);
     try {
+      if (!db) {
+        setLoading(false);
+        return;
+      }
       if (activeTab === 'users') {
         const q = query(collection(db, 'users'), orderBy('createdAt', 'desc'));
         const snapshot = await getDocs(q);
-        const usersData = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as UserRecord));
-        setUsers(usersData);
-
-        // Fetch banned IPs and Devices
-        const [ipSnap, deviceSnap] = await Promise.all([
-          getDocs(collection(db, 'banned_ips')),
-          getDocs(collection(db, 'banned_devices'))
-        ]);
-        const ips = ipSnap.docs.map(d => d.data().ip);
-        const devices = deviceSnap.docs.map(d => d.id);
-        setBannedIps(ips);
-        setBannedDevices(devices);
-        
-        setCache(prev => ({ ...prev, users: { data: { users: usersData, bannedIps: ips, bannedDevices: devices }, timestamp: now } }));
+        setUsers(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as UserRecord)));
       } else if (activeTab === 'keys') {
         const q = query(collection(db, 'licenseKeys'), orderBy('createdAt', 'desc'));
         const snapshot = await getDocs(q);
-        const keysData = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as LicenseKey));
-        setKeys(keysData);
-        setCache(prev => ({ ...prev, keys: { data: keysData, timestamp: now } }));
+        setKeys(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as LicenseKey)));
       } else if (activeTab === 'assets') {
         const q = query(collection(db, 'presetBackgrounds'), orderBy('createdAt', 'desc'));
         const snapshot = await getDocs(q);
-        const backgroundsData = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as PresetBackground));
-        setBackgrounds(backgroundsData);
-        
+        setBackgrounds(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as PresetBackground)));
+        // Also fetch settings for logo/bg
         const settingsDoc = await getDoc(doc(db, 'settings', 'global'));
-        let settingsData = null;
         if (settingsDoc.exists()) {
-            settingsData = settingsDoc.data() as AppSettings;
-            setSettings(settingsData);
-            setLogoUrlInput(settingsData.logoUrl || '');
-            setBgUrlInput(settingsData.backgroundUrl || '');
+            const data = settingsDoc.data() as AppSettings;
+            setSettings(data);
+            setLogoUrlInput(data.logoUrl || '');
+            setBgUrlInput(data.backgroundUrl || '');
         }
-        setCache(prev => ({ ...prev, assets: { data: { backgrounds: backgroundsData, settings: settingsData }, timestamp: now } }));
       } else if (activeTab === 'settings') {
         const docRef = doc(db, 'settings', 'global');
         const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-          const settingsData = docSnap.data() as AppSettings;
-          setSettings(settingsData);
-          setCache(prev => ({ ...prev, settings: { data: settingsData, timestamp: now } }));
-        }
+        if (docSnap.exists()) setSettings(docSnap.data() as AppSettings);
       } else if (activeTab === 'records') {
         const q = query(collection(db, 'activityLogs'), orderBy('timestamp', 'desc'), limit(100));
         const snapshot = await getDocs(q);
-        const logsData = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ActivityLog));
-        setLogs(logsData);
-        setCache(prev => ({ ...prev, records: { data: logsData, timestamp: now } }));
+        setLogs(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ActivityLog)));
       }
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -124,85 +76,22 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
   };
 
   // ... (User Management)
-  const handleBanUser = async (user: UserRecord) => {
+  const handleBanUser = async (userId: string, currentStatus: string) => {
     if (!confirm('هل أنت متأكد من تغيير حالة هذا المستخدم؟')) return;
     try {
-      const newStatus = user.status === 'banned' ? 'active' : 'banned';
-      await updateDoc(doc(db, 'users', user.id), { status: newStatus });
-      
-      // Also track in banned_emails to prevent re-registration
-      if (user.email) {
-        const emailDocId = (user.email || '').toLowerCase().replace(/\./g, '_');
-        if (newStatus === 'banned') {
-          await setDoc(doc(db, 'banned_emails', emailDocId), {
-            email: (user.email || '').toLowerCase(),
-            userId: user.id,
-            bannedAt: Timestamp.now()
-          });
-        } else {
-          await deleteDoc(doc(db, 'banned_emails', emailDocId));
-        }
-      }
-
-      setUsers(users.map(u => u.id === user.id ? { ...u, status: newStatus as any } : u));
+      if (!db) return;
+      const newStatus = currentStatus === 'banned' ? 'active' : 'banned';
+      await updateDoc(doc(db, 'users', userId), { status: newStatus });
+      setUsers(users.map(u => u.id === userId ? { ...u, status: newStatus as any } : u));
     } catch (error) {
       console.error("Error updating user:", error);
-    }
-  };
-
-  const handleBanIp = async (ip: string | undefined) => {
-    if (!ip) return alert("لا يوجد عنوان IP لهذا المستخدم");
-    const ipDocId = ip.replace(/\./g, '_');
-    const isBanned = bannedIps.includes(ip);
-    
-    if (!confirm(isBanned ? 'هل تريد فك حظر هذه الشبكة؟' : 'هل تريد حظر هذه الشبكة بالكامل؟')) return;
-
-    try {
-      if (isBanned) {
-        await deleteDoc(doc(db, 'banned_ips', ipDocId));
-        setBannedIps(bannedIps.filter(i => i !== ip));
-      } else {
-        await setDoc(doc(db, 'banned_ips', ipDocId), { ip, bannedAt: Timestamp.now() });
-        setBannedIps([...bannedIps, ip]);
-      }
-    } catch (e) {
-      console.error("IP Ban error:", e);
-    }
-  };
-
-  const handleBanDevice = async (deviceId: string | undefined) => {
-    if (!deviceId) return alert("لا يوجد معرف جهاز لهذا المستخدم");
-    const isBanned = bannedDevices.includes(deviceId);
-    
-    if (!confirm(isBanned ? 'هل تريد فك حظر هذا الجهاز؟' : 'هل تريد حظر هذا الجهاز بالكامل؟')) return;
-
-    try {
-      if (isBanned) {
-        await deleteDoc(doc(db, 'banned_devices', deviceId));
-        setBannedDevices(bannedDevices.filter(d => d !== deviceId));
-      } else {
-        await setDoc(doc(db, 'banned_devices', deviceId), { bannedAt: Timestamp.now() });
-        setBannedDevices([...bannedDevices, deviceId]);
-      }
-    } catch (e) {
-      console.error("Device Ban error:", e);
-    }
-  };
-
-  const handleToggleSvgaExAccess = async (userId: string, currentAccess: boolean) => {
-    try {
-      const newAccess = !currentAccess;
-      await updateDoc(doc(db, 'users', userId), { hasSvgaExAccess: newAccess });
-      setUsers(users.map(u => u.id === userId ? { ...u, hasSvgaExAccess: newAccess } : u));
-    } catch (error) {
-      console.error("Error updating SVGA EX access:", error);
-      alert("فشل تحديث صلاحية SVGA EX");
     }
   };
 
   const handleSetSubscription = async (userId: string, type: SubscriptionType) => {
     if (!confirm(`هل تريد تفعيل اشتراك ${type} لهذا المستخدم؟`)) return;
     try {
+      if (!db) return;
       let expiry = new Date();
       if (type === 'day') expiry.setDate(expiry.getDate() + 1);
       if (type === 'week') expiry.setDate(expiry.getDate() + 7);
@@ -222,6 +111,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
 
   const handleSetAllowedFormat = async (userId: string, formats: string[] | null) => {
     try {
+        if (!db) return;
         // Use formats directly to allow empty array (Block All) or null (Default)
         const value = formats;
         await updateDoc(doc(db, 'users', userId), {
@@ -237,6 +127,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
   const handleDeleteUser = async (userId: string) => {
     if (!confirm('هل أنت متأكد من حذف هذا المستخدم نهائياً؟ لا يمكن التراجع عن هذا الإجراء.')) return;
     try {
+      if (!db) return;
       await deleteDoc(doc(db, 'users', userId));
       setUsers(users.filter(u => u.id !== userId));
     } catch (error) {
@@ -249,6 +140,10 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
       if (!confirm('هل أنت متأكد من حذف جميع السجلات؟')) return;
       setLoading(true);
       try {
+          if (!db) {
+              setLoading(false);
+              return;
+          }
           const q = query(collection(db, 'activityLogs'));
           const snapshot = await getDocs(q);
           const deletePromises = snapshot.docs.map(d => deleteDoc(doc(db, 'activityLogs', d.id)));
@@ -266,6 +161,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
   // ... (Key Management)
   const handleGenerateKey = async (duration: SubscriptionType) => {
     try {
+      if (!db) return;
       const key = Math.random().toString(36).substring(2, 15).toUpperCase();
       const newKey: Omit<LicenseKey, 'id'> = {
         key,
@@ -284,6 +180,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
   const handleDeleteKey = async (keyId: string) => {
     if (!confirm('حذف هذا المفتاح؟')) return;
     try {
+      if (!db) return;
       await deleteDoc(doc(db, 'licenseKeys', keyId));
       setKeys(keys.filter(k => k.id !== keyId));
     } catch (error) {
@@ -295,6 +192,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
   const handleUploadAsset = async (file: File, type: 'logo' | 'background' | 'preset') => {
     if (!file) return;
     try {
+      if (!db || !storage) return;
       const storageRef = ref(storage, `assets/${type}/${Date.now()}_${file.name}`);
       await uploadBytes(storageRef, file);
       const url = await getDownloadURL(storageRef);
@@ -323,6 +221,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
 
   const handleSaveAssetUrl = async (type: 'logo' | 'background') => {
       try {
+          if (!db) return;
           if (type === 'logo') {
               await setDoc(doc(db, 'settings', 'global'), { logoUrl: logoUrlInput }, { merge: true });
               setSettings(prev => prev ? { ...prev, logoUrl: logoUrlInput } : null);
@@ -340,6 +239,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
   const handleAddPresetUrl = async () => {
       if (!presetUrlInput) return;
       try {
+          if (!db) return;
           await addDoc(collection(db, 'presetBackgrounds'), {
               label: 'External URL',
               url: presetUrlInput,
@@ -356,6 +256,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
   const handleDeletePreset = async (id: string, url: string) => {
     if (!confirm('حذف هذه الخلفية؟')) return;
     try {
+      if (!db) return;
       // Try to delete from storage (optional, might fail if permission denied)
       // const storageRef = ref(storage, url);
       // await deleteObject(storageRef).catch(console.warn);
@@ -372,6 +273,7 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
     e.preventDefault();
     if (!settings) return;
     try {
+      if (!db) return;
       await setDoc(doc(db, 'settings', 'global'), settings, { merge: true });
       alert("تم حفظ الإعدادات بنجاح");
     } catch (error) {
@@ -393,26 +295,24 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
         </button>
       </div>
 
-      <div className="flex flex-col lg:flex-row flex-1 overflow-hidden">
+      <div className="flex flex-1 overflow-hidden">
         {/* Sidebar */}
-        <div className="w-full lg:w-64 bg-slate-950/50 border-b lg:border-b-0 lg:border-l border-white/10 flex flex-row lg:flex-col p-2 sm:p-4 gap-1 sm:gap-2 overflow-x-auto custom-scrollbar no-scrollbar">
+        <div className="w-64 bg-slate-950/50 border-l border-white/10 flex flex-col p-4 gap-2">
           <NavButton active={activeTab === 'users'} onClick={() => setActiveTab('users')} icon={<Users />} label="المستخدمين" />
-          <NavButton active={activeTab === 'store'} onClick={() => setActiveTab('store')} icon={<Store />} label="المتجر" />
           <NavButton active={activeTab === 'keys'} onClick={() => setActiveTab('keys')} icon={<Key />} label="الاشتراكات" />
-          <NavButton active={activeTab === 'assets'} onClick={() => setActiveTab('assets')} icon={<ImageIcon />} label="الوسائط" />
+          <NavButton active={activeTab === 'assets'} onClick={() => setActiveTab('assets')} icon={<ImageIcon />} label="الوسائط والخلفيات" />
           <NavButton active={activeTab === 'records'} onClick={() => setActiveTab('records')} icon={<FileText />} label="السجلات" />
-          <NavButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<SettingsIcon />} label="الإعدادات" />
+          <NavButton active={activeTab === 'settings'} onClick={() => setActiveTab('settings')} icon={<SettingsIcon />} label="الإعدادات العامة" />
         </div>
 
         {/* Content */}
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 custom-scrollbar">
+        <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
           {loading ? (
             <div className="flex items-center justify-center h-full">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500"></div>
             </div>
           ) : (
             <>
-              {activeTab === 'store' && <StoreManager />}
               {activeTab === 'users' && (
                 <div className="space-y-6">
                   <h3 className="text-xl font-bold mb-4">إدارة المستخدمين</h3>
@@ -447,25 +347,11 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
                             </td>
                             <td className="p-3 flex gap-2">
                               <button 
-                                onClick={() => handleBanUser(user)}
+                                onClick={() => handleBanUser(user.id, user.status)}
                                 className="p-1.5 hover:bg-red-500/20 text-red-400 rounded transition-colors"
                                 title={user.status === 'active' ? 'حظر' : 'فك الحظر'}
                               >
                                 <Ban className="w-4 h-4" />
-                              </button>
-                              <button 
-                                onClick={() => handleBanIp(user.lastIp)}
-                                className={`p-1.5 rounded transition-colors ${bannedIps.includes(user.lastIp || '') ? 'bg-red-500 text-white' : 'hover:bg-red-500/20 text-red-400'}`}
-                                title={bannedIps.includes(user.lastIp || '') ? 'فك حظر الشبكة' : 'حظر الشبكة (IP)'}
-                              >
-                                <Wifi className="w-4 h-4" />
-                              </button>
-                              <button 
-                                onClick={() => handleBanDevice(user.deviceId)}
-                                className={`p-1.5 rounded transition-colors ${bannedDevices.includes(user.deviceId || '') ? 'bg-red-500 text-white' : 'hover:bg-red-500/20 text-red-400'}`}
-                                title={bannedDevices.includes(user.deviceId || '') ? 'فك حظر الجهاز' : 'حظر الجهاز'}
-                              >
-                                <Smartphone className="w-4 h-4" />
                               </button>
                               <button 
                                 onClick={() => handleDeleteUser(user.id)}
@@ -528,13 +414,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
                                   <SettingsIcon className="w-4 h-4" />
                                 </button>
                               </div>
-                              <button 
-                                onClick={() => handleToggleSvgaExAccess(user.id, !!user.hasSvgaExAccess)}
-                                className={`p-1.5 rounded transition-colors ${user.hasSvgaExAccess ? 'bg-red-500/20 text-red-400' : 'hover:bg-slate-500/20 text-slate-400'}`} 
-                                title={user.hasSvgaExAccess ? "إلغاء صلاحية SVGA 2.0" : "منح صلاحية SVGA 2.0"}
-                              >
-                                <BadgeCheck className="w-4 h-4" />
-                              </button>
                             </td>
                           </tr>
                         ))}
@@ -897,20 +776,6 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
                         />
                     </div>
 
-                    <div className="flex items-center justify-between p-4 bg-slate-950/30 border border-white/10 rounded-xl">
-                        <div className="flex flex-col gap-1">
-                            <span className="text-sm font-bold text-white">تفعيل SVGA 2.0 للجميع</span>
-                            <span className="text-[10px] text-slate-500">عند التفعيل، سيظهر الزر لجميع المستخدمين (مع القفل إذا لم يملكوا صلاحية)</span>
-                        </div>
-                        <button 
-                            type="button"
-                            onClick={() => setSettings(prev => prev ? { ...prev, isSvgaExEnabled: !prev.isSvgaExEnabled } : null)}
-                            className={`w-12 h-6 rounded-full transition-all relative ${settings?.isSvgaExEnabled ? 'bg-red-500' : 'bg-slate-700'}`}
-                        >
-                            <div className={`absolute top-1 w-4 h-4 bg-white rounded-full transition-all ${settings?.isSvgaExEnabled ? 'right-7' : 'right-1'}`}></div>
-                        </button>
-                    </div>
-
                     <div className="pt-4 border-t border-white/10">
                       <button 
                         type="submit"
@@ -933,13 +798,13 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({ currentUser, onCancel })
 const NavButton: React.FC<{ active: boolean; onClick: () => void; icon: React.ReactNode; label: string }> = ({ active, onClick, icon, label }) => (
   <button
     onClick={onClick}
-    className={`flex-shrink-0 lg:w-full flex items-center gap-2 sm:gap-3 px-3 sm:px-4 py-2 sm:py-3 rounded-lg transition-all ${
+    className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg transition-all ${
       active 
         ? 'bg-indigo-500/10 text-indigo-400 border border-indigo-500/20' 
         : 'text-slate-400 hover:bg-white/5 hover:text-white'
     }`}
   >
-    {React.cloneElement(icon as React.ReactElement, { className: 'w-4 h-4 sm:w-5 sm:h-5' })}
-    <span className="font-medium text-xs sm:text-sm whitespace-nowrap">{label}</span>
+    {React.cloneElement(icon as React.ReactElement, { className: 'w-5 h-5' })}
+    <span className="font-medium">{label}</span>
   </button>
 );

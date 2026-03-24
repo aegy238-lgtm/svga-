@@ -26,6 +26,11 @@ export const SubscriptionModal: React.FC<SubscriptionModalProps> = ({ isOpen, on
     setSuccess('');
 
     try {
+      if (!db) {
+        setError('قاعدة البيانات غير متصلة');
+        setLoading(false);
+        return;
+      }
       // 1. Find the key
       const q = query(collection(db, 'licenseKeys'), where('key', '==', licenseKey.trim()));
       const snapshot = await getDocs(q);
