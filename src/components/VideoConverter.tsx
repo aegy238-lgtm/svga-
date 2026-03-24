@@ -54,6 +54,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
   const [removeWhite, setRemoveWhite] = useState(false);
   const [whiteTolerance, setWhiteTolerance] = useState(30);
   const [removeGreen, setRemoveGreen] = useState(false);
+  const [removeBlue, setRemoveBlue] = useState(false);
   const [fadeConfig, setFadeConfig] = useState({ top: 0, bottom: 0, left: 0, right: 0 });
   
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -74,8 +75,9 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
   }, []);
 
   const formats = [
+    { id: 'MP4 (Standard)', name: 'MP4 (Standard)', icon: '🎬', cost: 1, desc: 'فيديو MP4 قياسي بجودة عالية' },
     { id: 'VAP (MP4)', name: 'VAP (Alpha+RGB)', icon: '📹', cost: 1, desc: 'فيديو مع قناة شفافية منفصلة' },
-    { id: 'VAP 1.0.5', name: 'VAP 1.0.5', icon: '🚀', cost: 1, desc: 'تصدير VAP 1.0.5' },
+    { id: 'VAP 1.0.5', name: 'VAP 1.0.5 (Special)', icon: '🚀', cost: 1, desc: 'تصدير خاص VAP 1.0.5' },
     { id: 'SVGA 2.0', name: 'SVGA Animation', icon: '📦', cost: 1, desc: 'ملف SVGA متوافق مع تطبيقات البث' },
     { id: 'GIF (Animation)', name: 'GIF الشفاف', icon: '🖼️', cost: 1, desc: 'صور متحركة للمواقع والدردشة' },
     { id: 'APNG (Animation)', name: 'APNG الشفاف', icon: '🎞️', cost: 1, desc: 'جودة أعلى من GIF مع شفافية كاملة' },
@@ -84,6 +86,14 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
   ].filter(f => {
     // Check local hidden formats
     if (hiddenFormats.includes(f.id)) return false;
+    
+    // Check admin restricted formats
+    if (currentUser?.allowedExportFormat) {
+        const allowed = Array.isArray(currentUser.allowedExportFormat) 
+            ? currentUser.allowedExportFormat 
+            : [currentUser.allowedExportFormat];
+        return allowed.includes(f.id);
+    }
     
     return true;
   });
@@ -139,9 +149,6 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
       // 3. Remove Green Logic (Chroma Key with Tolerance)
       if (removeGreen) {
         // Adjust sensitivity based on tolerance
-        // Tolerance 30 -> diff 40
-        // Tolerance 50 -> diff 20
-        // Tolerance 10 -> diff 60
         const sensitivity = Math.max(10, 70 - whiteTolerance);
         
         if (g > 100 && g > r + sensitivity && g > b + sensitivity) {
@@ -150,6 +157,20 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
             
             if (a < 255) {
                 g = Math.min(g, Math.max(r, b));
+            }
+        }
+      }
+
+      // 3.5 Remove Blue Logic (Chroma Key with Tolerance)
+      if (removeBlue) {
+        const sensitivity = Math.max(10, 70 - whiteTolerance);
+        
+        if (b > 100 && b > r + sensitivity && b > g + sensitivity) {
+            const dominance = Math.min((b - Math.max(r, g)), 100) / 100; 
+            a = Math.min(a, 255 * (1 - dominance));
+            
+            if (a < 255) {
+                b = Math.min(b, Math.max(r, g));
             }
         }
       }
@@ -229,7 +250,9 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
         audioData = new Uint8Array(arrayBuffer);
       }
 
-      if (selectedFormat === 'VAP (MP4)') {
+      if (selectedFormat === 'MP4 (Standard)') {
+        await exportToMP4Standard(video, vw, vh, totalFrames, fps, audioData);
+      } else if (selectedFormat === 'VAP (MP4)') {
         await exportToVAP(video, vw, vh, totalFrames, fps, audioData);
       } else if (selectedFormat === 'VAP 1.0.5') {
         await exportToVAP105(video, vw, vh, totalFrames, fps, audioData);
@@ -264,6 +287,145 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
       const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
       const hashArray = Array.from(new Uint8Array(hashBuffer));
       return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  };
+
+  const exportToMP4Standard = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, audioData: Uint8Array | null) => {
+    setPhase('جاري إنشاء فيديو MP4 القياسي...');
+    
+    // Ensure even dimensions for MP4
+    const safeWidth = vw % 2 === 0 ? vw : vw - 1;
+    const safeHeight = vh % 2 === 0 ? vh : vh - 1;
+
+    // Audio Setup (AAC for MP4)
+    let audioTrack: any = undefined;
+    let audioEncoder: AudioEncoder | null = null;
+    let audioDataChunks: AudioData[] = [];
+
+    if (audioData) {
+        try {
+            const offlineCtx = new OfflineAudioContext(2, 48000 * 1, 48000); 
+            const audioBuffer = await offlineCtx.decodeAudioData(audioData.buffer.slice(0));
+            
+            audioTrack = {
+                codec: 'mp4a.40.2',
+                numberOfChannels: 2,
+                sampleRate: 48000
+            };
+
+            const numberOfChannels = 2;
+            const sampleRate = audioBuffer.sampleRate;
+            const length = audioBuffer.length;
+            const planarBuffer = new Float32Array(length * numberOfChannels);
+            
+            for (let c = 0; c < numberOfChannels; c++) {
+                const channelData = audioBuffer.numberOfChannels > c ? audioBuffer.getChannelData(c) : audioBuffer.getChannelData(0);
+                planarBuffer.set(channelData, c * length);
+            }
+
+            const chunkSize = sampleRate;
+            for (let i = 0; i < length; i += chunkSize) {
+                const currentChunkSize = Math.min(chunkSize, length - i);
+                const chunkBuffer = new Float32Array(currentChunkSize * numberOfChannels);
+                for (let c = 0; c < numberOfChannels; c++) {
+                    const start = c * length + i;
+                    const end = start + currentChunkSize;
+                    chunkBuffer.set(planarBuffer.subarray(start, end), c * currentChunkSize);
+                }
+                audioDataChunks.push(new AudioData({
+                    format: 'f32-planar',
+                    sampleRate: sampleRate,
+                    numberOfFrames: currentChunkSize,
+                    numberOfChannels: numberOfChannels,
+                    timestamp: (i / sampleRate) * 1000000,
+                    data: chunkBuffer
+                }));
+            }
+        } catch (audioError) {
+            console.warn("Audio processing failed, continuing without audio:", audioError);
+            audioTrack = undefined;
+            audioDataChunks = [];
+        }
+    }
+
+    const muxer = new Mp4Muxer.Muxer({
+        target: new Mp4Muxer.ArrayBufferTarget(),
+        video: {
+            codec: 'avc',
+            width: safeWidth,
+            height: safeHeight
+        },
+        audio: audioTrack ? {
+            codec: 'aac',
+            numberOfChannels: 2,
+            sampleRate: 48000
+        } : undefined,
+        fastStart: 'in-memory'
+    });
+
+    const videoEncoder = new VideoEncoder({
+        output: (chunk: any, meta: any) => muxer.addVideoChunk(chunk, meta),
+        error: (e: any) => console.error(e)
+    });
+
+    const videoCodec = (safeWidth * safeHeight) > 2228224 ? 'avc1.4d0033' : 'avc1.4d002a';
+    
+    let bitrate = 8000000;
+    if (globalQuality === 'high') bitrate = 15000000;
+    if (globalQuality === 'low') bitrate = 4000000;
+
+    videoEncoder.configure({
+        codec: videoCodec,
+        width: safeWidth,
+        height: safeHeight,
+        bitrate: bitrate
+    });
+
+    if (audioTrack) {
+        audioEncoder = new AudioEncoder({
+            output: (chunk: any, meta: any) => muxer.addAudioChunk(chunk, meta),
+            error: (e: any) => console.error(e)
+        });
+        audioEncoder.configure({
+            codec: 'mp4a.40.2',
+            numberOfChannels: 2,
+            sampleRate: 48000,
+            bitrate: 128000
+        });
+        for (const chunk of audioDataChunks) {
+            audioEncoder.encode(chunk);
+            chunk.close();
+        }
+        await audioEncoder.flush();
+    }
+
+    const canvas = document.createElement('canvas');
+    canvas.width = safeWidth; canvas.height = safeHeight;
+    const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+    for (let i = 0; i < totalFrames; i++) {
+        video.currentTime = i / fps;
+        await new Promise(r => {
+            const onSeek = () => { video.removeEventListener('seeked', onSeek); r(null); };
+            video.addEventListener('seeked', onSeek);
+        });
+
+        if (ctx) {
+            ctx.clearRect(0, 0, safeWidth, safeHeight);
+            ctx.drawImage(video, 0, 0, safeWidth, safeHeight);
+            applyTransparencyEffects(ctx, safeWidth, safeHeight);
+            
+            const bitmap = await createImageBitmap(canvas);
+            const frame = new VideoFrame(bitmap, { timestamp: (i * 1000000) / fps });
+            videoEncoder.encode(frame, { keyFrame: i % 30 === 0 });
+            frame.close();
+            bitmap.close();
+        }
+        setProgress(Math.floor((i / totalFrames) * 100));
+    }
+
+    await videoEncoder.flush();
+    muxer.finalize();
+    downloadBlob(new Blob([muxer.target.buffer], { type: 'video/mp4' }), `${file?.name.replace('.mp4', '')}_Standard.mp4`);
   };
 
   const exportToVAP105 = async (video: HTMLVideoElement, vw: number, vh: number, totalFrames: number, fps: number, audioData: Uint8Array | null) => {
@@ -1227,6 +1389,19 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
                 </button>
 
                 <button 
+                onClick={() => setRemoveBlue(!removeBlue)}
+                className={`w-full p-5 rounded-2xl border transition-all flex items-center justify-between group ${removeBlue ? 'bg-blue-500/10 border-blue-500/30 text-blue-400' : 'bg-white/5 border-white/5 text-slate-500'}`}
+                >
+                <div className="flex items-center gap-3">
+                    <div className={`w-5 h-5 rounded-md border-2 transition-colors ${removeBlue ? 'bg-blue-600 border-blue-400' : 'bg-transparent border-slate-500'}`}></div>
+                    <span className="font-black text-xs uppercase tracking-widest">إزالة الكروما (أزرق)</span>
+                </div>
+                <div className={`w-10 h-5 rounded-full relative transition-colors ${removeBlue ? 'bg-blue-600' : 'bg-slate-700'}`}>
+                    <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${removeBlue ? 'right-6' : 'right-1'}`}></div>
+                </div>
+                </button>
+
+                <button 
                 onClick={() => setRemoveWhite(!removeWhite)}
                 className={`w-full p-5 rounded-2xl border transition-all flex flex-col items-start justify-between group ${removeWhite ? 'bg-slate-200/10 border-slate-200/30 text-slate-200' : 'bg-white/5 border-white/5 text-slate-500'}`}
                 >
@@ -1243,7 +1418,7 @@ export const VideoConverter: React.FC<VideoConverterProps> = ({ currentUser, onC
             </div>
 
             {/* Universal Tolerance Slider */}
-            {(removeWhite || removeBlack || removeGreen) && (
+            {(removeWhite || removeBlack || removeGreen || removeBlue) && (
                 <div className="pt-4 border-t border-white/10 mt-2">
                     <div className="flex justify-between text-[9px] font-black text-slate-400 mb-2">
                         <span>الحساسية (Tolerance)</span>

@@ -16,9 +16,7 @@ export const handleSvgaExExport = async (params: {
     layerImages: Record<string, string>,
     assetColors: Record<string, string>,
     assetColorModes: Record<string, 'tint' | 'fill'>,
-    assetBlurs: Record<string, number>,
     deletedKeys: Set<string>,
-    layerDisplayNames: Record<string, string>,
     customLayers: any[],
     watermark: string | null,
     wmScale: number,
@@ -36,7 +34,7 @@ export const handleSvgaExExport = async (params: {
 }) => {
     const {
         metadata, videoWidth, videoHeight, exportScale, svgaScale, svgaPos,
-        layerImages, assetColors, assetColorModes, assetBlurs, deletedKeys, layerDisplayNames, customLayers, watermark,
+        layerImages, assetColors, assetColorModes, deletedKeys, customLayers, watermark,
         wmScale, wmPos, audioUrl, audioFile, originalAudioUrl, fadeConfig,
         applyTransparencyEffects, setProgress, setExportPhase, setIsExporting,
         protobuf, globalQuality
@@ -155,12 +153,11 @@ export const handleSvgaExExport = async (params: {
 
             if (!finalBase64) continue;
 
-            // Apply modifications (Scale, Tint, Fade, Quality, Blur)
+            // Apply modifications (Scale, Tint, Fade, Quality)
             const hasColorTint = !!assetColors[key];
-            const hasBlur = (assetBlurs[key] || 0) > 0;
             const needsQualityCompression = globalQuality === 'low' || globalQuality === 'medium';
             
-            if (exportScale < 0.99 || isEdgeFadeActive || hasColorTint || needsQualityCompression || hasBlur) {
+            if (exportScale < 0.99 || isEdgeFadeActive || hasColorTint || needsQualityCompression) {
                 const img = new Image();
                 img.src = finalBase64;
                 await new Promise(r => img.onload = r);
@@ -175,11 +172,7 @@ export const handleSvgaExExport = async (params: {
                 canvas.height = Math.floor(img.height * targetScale);
                 const ctx = canvas.getContext('2d');
                 if (ctx) {
-                    if (hasBlur) {
-                        ctx.filter = `blur(${assetBlurs[key] / 10}px)`;
-                    }
                     ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                    ctx.filter = 'none';
 
                     if (hasColorTint) {
                         const color = assetColors[key];
@@ -242,9 +235,6 @@ export const handleSvgaExExport = async (params: {
 
         if (message.sprites) {
             message.sprites.forEach((sprite: any) => {
-                if (layerDisplayNames[sprite.imageKey]) {
-                    sprite.name = layerDisplayNames[sprite.imageKey];
-                }
                 if (sprite.frames) {
                     sprite.frames.forEach((frame: any) => {
                         const cx = videoWidth / 2;
@@ -308,16 +298,8 @@ export const handleSvgaExExport = async (params: {
                 transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
             };
             if (!message.sprites) message.sprites = [];
-            if (isBack) message.sprites.unshift({ 
-                imageKey: layerKey, 
-                name: layer.name,
-                frames: Array(message.params.frames || 1).fill(layerFrame) 
-            });
-            else message.sprites.push({ 
-                imageKey: layerKey, 
-                name: layer.name,
-                frames: Array(message.params.frames || 1).fill(layerFrame) 
-            });
+            if (isBack) message.sprites.unshift({ imageKey: layerKey, frames: Array(message.params.frames || 1).fill(layerFrame) });
+            else message.sprites.push({ imageKey: layerKey, frames: Array(message.params.frames || 1).fill(layerFrame) });
         };
 
         for (const layer of customLayers.filter(l => l.zIndexMode === 'back').reverse()) await processLayer(layer, true);

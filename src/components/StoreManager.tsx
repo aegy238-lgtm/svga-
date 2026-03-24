@@ -2,9 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { db } from '../lib/firebase';
 import { collection, getDocs, addDoc, updateDoc, deleteDoc, doc, query, orderBy, Timestamp } from 'firebase/firestore';
 import { StoreProduct, PRODUCT_CATEGORIES } from '../types';
-import { Trash2, Edit, Save, X } from 'lucide-react';
-
-const SUPPORTED_FORMATS = ['PNG Sequence', 'PAG', 'SVGA', 'Lottie', 'DotLottie', 'MOV', 'WebM', 'GIF', 'WebP', 'APNG', 'VAP', 'MP4', 'AEP'];
+import { Trash2, Edit, Plus, Save, X } from 'lucide-react';
 
 export const StoreManager: React.FC = () => {
   const [products, setProducts] = useState<StoreProduct[]>([]);
@@ -62,15 +60,6 @@ export const StoreManager: React.FC = () => {
     }
   };
 
-  const toggleFormat = (format: string) => {
-    const current = formData.supportedFormats || [];
-    if (current.includes(format)) {
-      setFormData({...formData, supportedFormats: current.filter(f => f !== format)});
-    } else {
-      setFormData({...formData, supportedFormats: [...current, format]});
-    }
-  };
-
   return (
     <div className="space-y-6">
       <h3 className="text-xl font-bold">إدارة المنتجات</h3>
@@ -86,28 +75,9 @@ export const StoreManager: React.FC = () => {
               {PRODUCT_CATEGORIES.map(cat => <option key={cat} value={cat}>{cat}</option>)}
           </select>
           <input type="text" placeholder="رابط الفيديو" value={formData.videoUrl || ''} onChange={e => setFormData({...formData, videoUrl: e.target.value})} className="bg-slate-900 border border-white/10 rounded-lg px-4 py-2" />
+          <input type="text" placeholder="الصيغة (مثال: صورة, فيديو)" value={formData.supportedFormats?.join(', ') || ''} onChange={e => setFormData({...formData, supportedFormats: e.target.value.split(',').map(s => s.trim())})} className="bg-slate-900 border border-white/10 rounded-lg px-4 py-2" />
         </div>
-        
-        <div className="space-y-2">
-            <label className="text-sm text-slate-400">الصيغ المدعومة:</label>
-            <div className="flex flex-wrap gap-2">
-                {SUPPORTED_FORMATS.map(format => (
-                    <button 
-                        key={format}
-                        type="button"
-                        onClick={() => toggleFormat(format)}
-                        className={`px-3 py-1 rounded-full text-xs transition-colors ${
-                            formData.supportedFormats?.includes(format) 
-                            ? 'bg-indigo-600 text-white' 
-                            : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                        }`}
-                    >
-                        {format}
-                    </button>
-                ))}
-            </div>
-        </div>
-
+        <textarea placeholder="وصف المنتج" value={formData.description || ''} onChange={e => setFormData({...formData, description: e.target.value})} className="w-full bg-slate-900 border border-white/10 rounded-lg px-4 py-2" rows={3} />
         <div className="flex gap-2">
             <button type="submit" className="px-4 py-2 bg-indigo-600 rounded-lg flex items-center gap-2">
                 <Save className="w-4 h-4" /> {editingProduct ? 'حفظ التعديلات' : 'إضافة المنتج'}

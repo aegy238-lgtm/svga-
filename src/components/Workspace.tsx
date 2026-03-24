@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { FileMetadata, MaterialAsset, AppSettings, UserRecord, PresetBackground } from '../types';
-import { Layers, Download, Copy, Trash2 } from 'lucide-react';
+import { Layers, Download, Copy, Trash2, Lock } from 'lucide-react';
 import { logActivity } from '../utils/logger';
 import * as Mp4Muxer from 'mp4-muxer';
 import { FFmpeg } from '@ffmpeg/ffmpeg';
@@ -24,6 +24,7 @@ import { VapPlayer } from './VapPlayer';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAccessControl } from '../hooks/useAccessControl';
 import { svgaSchema } from '../svga-proto';
+import { handleSvgaExExport } from '../utils/svgaExExport';
 
 interface WorkspaceProps {
   metadata: FileMetadata;
@@ -34,6 +35,7 @@ interface WorkspaceProps {
   onSubscriptionRequired: () => void;
   globalQuality?: 'low' | 'medium' | 'high';
   onFileReplace?: (meta: FileMetadata) => void;
+  mode?: 'normal' | 'ex';
 }
 
 interface CustomLayer {
@@ -50,7 +52,7 @@ interface CustomLayer {
 
 const TRANSPARENT_PIXEL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
 
-export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata, onCancel, settings, currentUser, onLoginRequired, onSubscriptionRequired, globalQuality: initialGlobalQuality = 'high', onFileReplace }) => {
+export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata, onCancel, settings, currentUser, onLoginRequired, onSubscriptionRequired, globalQuality: initialGlobalQuality = 'high', onFileReplace, mode = 'normal' }) => {
   const { checkAccess } = useAccessControl();
   const { t, dir } = useLanguage();
   const [metadata, setMetadata] = useState<FileMetadata>(initialMetadata);
@@ -80,7 +82,24 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
   const [searchQuery, setSearchQuery] = useState('');
   const [assetsLoading, setAssetsLoading] = useState(true);
   const [scale, setScale] = useState(1);
-  const [activeSideTab, setActiveSideTab] = useState<'layers' | 'transforms' | 'bg' | 'optimize'>('transforms');
+  const [activeSideTab, setActiveSideTab] = useState<'layers' | 'transforms' | 'bg' | 'optimize' | 'settings'>('transforms');
+  const [hiddenFormats, setHiddenFormats] = useState<string[]>(() => {
+      const saved = localStorage.getItem('quantum_hidden_formats');
+      return saved ? JSON.parse(saved) : [];
+  });
+
+  useEffect(() => {
+      localStorage.setItem('quantum_hidden_formats', JSON.stringify(hiddenFormats));
+  }, [hiddenFormats]);
+
+  useEffect(() => {
+      const handleStorage = () => {
+          const saved = localStorage.getItem('quantum_hidden_formats');
+          if (saved) setHiddenFormats(JSON.parse(saved));
+      };
+      window.addEventListener('storage', handleStorage);
+      return () => window.removeEventListener('storage', handleStorage);
+  }, []);
 
   const [presetBgs, setPresetBgs] = useState<PresetBackground[]>([]);
   const [previewBg, setPreviewBg] = useState<string | null>(null);
@@ -512,7 +531,6 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
   useEffect(() => {
     const fetchBackgrounds = async () => {
       try {
-        if (!db) return;
         const querySnapshot = await getDocs(collection(db, 'presetBackgrounds'));
         const list: PresetBackground[] = [];
         querySnapshot.forEach((doc) => list.push({ id: doc.id, ...doc.data() } as PresetBackground));
@@ -1952,14 +1970,25 @@ export const Workspace: React.FC<WorkspaceProps> = ({ metadata: initialMetadata,
               
               const ctx = canvas.getContext('2d');
               if (ctx) {
-                  if (hasColorTint) {
-                      ctx.shadowColor = assetColors[key];
-                      ctx.shadowBlur = 2;
-                      ctx.shadowOffsetX = 0;
-                      ctx.shadowOffsetY = 0;
-                  }
-
                   ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                  if (hasColorTint) {
+                      const color = assetColors[key];
+                      const mode = assetColorModes[key] || 'tint';
+                      
+                      if (mode === 'fill') {
+                          ctx.globalCompositeOperation = 'source-in';
+                          ctx.fillStyle = color;
+                          ctx.fillRect(0, 0, canvas.width, canvas.height);
+                      } else {
+                          ctx.globalCompositeOperation = 'multiply';
+                          ctx.fillStyle = color;
+                          ctx.fillRect(0, 0, canvas.width, canvas.height);
+                          ctx.globalCompositeOperation = 'destination-in';
+                          ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                      }
+                      ctx.globalCompositeOperation = 'source-over';
+                  }
                   
                   if (isEdgeFadeActive) {
                       applyTransparencyEffects(ctx, canvas.width, canvas.height);
@@ -3429,21 +3458,23 @@ if (!this.JSON) { this.JSON = {}; }
                     const audioBuffer = await offlineCtx.decodeAudioData(arrayBuffer);
                     
                     audioTrack = {
-                        codec: 'A_OPUS',
+                        codec: recordingFormat === 'mp4' ? 'mp4a.40.2' : 'A_OPUS',
                         numberOfChannels: 2,
                         sampleRate: 48000
                     };
 
                     const numberOfChannels = 2;
-                    const length = audioBuffer.length;
                     const sampleRate = audioBuffer.sampleRate;
+                    // Limit audio length to recordingDuration to prevent extra audio in export
+                    const maxSamples = Math.floor(recordingDuration * sampleRate);
+                    const length = Math.min(audioBuffer.length, maxSamples);
                     const planarBuffer = new Float32Array(length * numberOfChannels);
                     
                     for (let c = 0; c < numberOfChannels; c++) {
                         const channelData = audioBuffer.numberOfChannels > c 
                             ? audioBuffer.getChannelData(c) 
                             : audioBuffer.getChannelData(0);
-                        planarBuffer.set(channelData, c * length);
+                        planarBuffer.set(channelData.subarray(0, length), c * length);
                     }
 
                     const chunkSize = sampleRate;
@@ -3470,30 +3501,45 @@ if (!this.JSON) { this.JSON = {}; }
             }
         }
 
-        const muxer = new WebMMuxer.Muxer({
-            target: new WebMMuxer.ArrayBufferTarget(),
-            video: {
-                codec: 'V_VP9',
-                width: safeWidth,
-                height: safeHeight,
-                frameRate: fps,
-                alpha: false
-            },
-            audio: audioTrack
-        });
+        const muxer = recordingFormat === 'mp4' 
+            ? new Mp4Muxer.Muxer({
+                target: new Mp4Muxer.ArrayBufferTarget(),
+                video: {
+                    codec: 'avc',
+                    width: safeWidth,
+                    height: safeHeight
+                },
+                audio: audioTrack ? {
+                    codec: 'aac',
+                    numberOfChannels: 2,
+                    sampleRate: 48000
+                } : undefined,
+                fastStart: 'in-memory'
+            })
+            : new WebMMuxer.Muxer({
+                target: new WebMMuxer.ArrayBufferTarget(),
+                video: {
+                    codec: 'V_VP9',
+                    width: safeWidth,
+                    height: safeHeight,
+                    frameRate: fps,
+                    alpha: false
+                },
+                audio: audioTrack
+            });
 
         const videoEncoder = new VideoEncoder({
-            output: (chunk, meta) => muxer.addVideoChunk(chunk, meta),
-            error: (e) => console.error(e)
+            output: (chunk: any, meta: any) => muxer.addVideoChunk(chunk, meta),
+            error: (e: any) => console.error(e)
         });
 
         if (audioTrack) {
             audioEncoder = new AudioEncoder({
-                output: (chunk, meta) => muxer.addAudioChunk(chunk, meta),
-                error: (e) => console.error(e)
+                output: (chunk: any, meta: any) => muxer.addAudioChunk(chunk, meta),
+                error: (e: any) => console.error(e)
             });
             audioEncoder.configure({
-                codec: 'opus',
+                codec: recordingFormat === 'mp4' ? 'mp4a.40.2' : 'opus',
                 numberOfChannels: 2,
                 sampleRate: 48000,
                 bitrate: 128000
@@ -3509,12 +3555,16 @@ if (!this.JSON) { this.JSON = {}; }
         if (globalQuality === 'high') bitrate = 15000000;
         if (globalQuality === 'low') bitrate = 4000000;
 
+        const videoCodec = recordingFormat === 'mp4' 
+            ? ((safeWidth * safeHeight) > 2228224 ? 'avc1.4d0033' : 'avc1.4d002a')
+            : 'vp09.00.10.08';
+
         videoEncoder.configure({
-            codec: 'vp09.00.10.08',
+            codec: videoCodec,
             width: safeWidth,
             height: safeHeight,
             bitrate: bitrate, 
-            alpha: 'discard'
+            alpha: recordingFormat === 'mp4' ? undefined : 'discard'
         });
 
         setExportPhase('جاري تسجيل الإطارات (Rendering)...');
@@ -3589,25 +3639,18 @@ if (!this.JSON) { this.JSON = {}; }
             setProgress(Math.floor(((i + 1) / targetFrames) * 100));
         }
 
-        // Add one last frame to prevent abrupt cut
-        if (targetFrames > 0) {
-             const bitmap = await createImageBitmap(compCanvas);
-             const frame = new VideoFrame(bitmap, { timestamp: (targetFrames * 1000000) / fps });
-             videoEncoder.encode(frame, { keyFrame: false });
-             frame.close();
-             bitmap.close();
-        }
-
         await videoEncoder.flush();
         muxer.finalize();
 
         const buffer = muxer.target.buffer;
-        const blob = new Blob([buffer], { type: 'video/webm' });
+        const mimeType = recordingFormat === 'mp4' ? 'video/mp4' : 'video/webm';
+        const extension = recordingFormat === 'mp4' ? 'mp4' : 'webm';
+        const blob = new Blob([buffer], { type: mimeType });
         const url = URL.createObjectURL(blob);
         
         const a = document.createElement('a');
         a.href = url;
-        a.download = `${metadata.name.replace('.svga', '')}_Recording.webm`;
+        a.download = `${metadata.name.replace('.svga', '')}_Recording.${extension}`;
         a.click();
 
         svgaInstance.stepToFrame(originalFrame, true);
@@ -3623,6 +3666,7 @@ if (!this.JSON) { this.JSON = {}; }
   };
 
   const [showRecordingModal, setShowRecordingModal] = useState(false);
+  const [recordingFormat, setRecordingFormat] = useState<'webm' | 'mp4'>('mp4');
 
   const handleReplaceSvgaFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -3683,6 +3727,24 @@ if (!this.JSON) { this.JSON = {}; }
   };
 
   const handleVAP105Export = async (fromMain = false) => {
+    if (!currentUser) {
+        onLoginRequired();
+        return;
+    }
+
+    const hasActiveSubscription = currentUser.subscriptionType && currentUser.subscriptionType !== 'none';
+    const hasSpecificPermission = currentUser.allowedExportFormat && 
+        (Array.isArray(currentUser.allowedExportFormat) 
+            ? currentUser.allowedExportFormat.includes('VAP 1.0.5') 
+            : currentUser.allowedExportFormat === 'VAP 1.0.5');
+
+    const isAllowed = hasActiveSubscription || hasSpecificPermission;
+
+    if (!isAllowed) {
+        onSubscriptionRequired();
+        return;
+    }
+
     if (!metadata.videoItem) return;
 
     if (!fromMain) {
@@ -4023,13 +4085,32 @@ if (!this.JSON) { this.JSON = {}; }
   };
 
   // Enforce Allowed Format
-  // Removed format restriction effect
+  useEffect(() => {
+    if (currentUser?.allowedExportFormat) {
+        const allowed = Array.isArray(currentUser.allowedExportFormat) 
+            ? currentUser.allowedExportFormat 
+            : [currentUser.allowedExportFormat];
+        
+        if (!allowed.includes(selectedFormat)) {
+             setSelectedFormat(allowed[0] || 'AE Project');
+        }
+    }
+  }, [currentUser, selectedFormat]);
 
-  const availableFormats = ['AE Project', 'SVGA 2.0', 'SVGA 2.0 EX', 'Image Sequence', 'GIF (Animation)', 'APNG (Animation)', 'WebM (Video)', 'WebP (Animated)', 'VAP (MP4)', 'VAP 1.0.5'];
+  const availableFormats = ['AE Project', 'SVGA 2.0 EX', 'SVGA 2.0', 'Image Sequence', 'GIF (Animation)', 'APNG (Animation)', 'WebM (Video)', 'WebP (Animated)', 'VAP (MP4)', 'VAP 1.0.5'];
   
   const displayedFormats = useMemo(() => {
-      return availableFormats;
-  }, [availableFormats]);
+      // If we are in EX mode, only show SVGA 2.0 EX
+      if (mode === 'ex') return ['SVGA 2.0 EX'];
+
+      if (!currentUser?.allowedExportFormat) return availableFormats.filter(f => !hiddenFormats.includes(f));
+      const allowed = Array.isArray(currentUser.allowedExportFormat) 
+          ? currentUser.allowedExportFormat 
+          : [currentUser.allowedExportFormat];
+      
+      // Always show SVGA 2.0 and SVGA 2.0 EX if enabled globally, even if not in allowed formats
+      return availableFormats.filter(f => (allowed.includes(f) || (f === 'SVGA 2.0' && settings?.isSvgaExEnabled) || (f === 'SVGA 2.0 EX')) && !hiddenFormats.includes(f));
+  }, [currentUser, availableFormats, hiddenFormats, mode, settings?.isSvgaExEnabled]);
 
   useEffect(() => {
       if (!displayedFormats.includes(selectedFormat) && displayedFormats.length > 0) {
@@ -4037,655 +4118,13 @@ if (!this.JSON) { this.JSON = {}; }
       }
   }, [displayedFormats, selectedFormat]);
 
-  const handleExportSVGA2_0 = async (isEx = false) => {
-    if (typeof protobuf === 'undefined') return;
-    const isEdgeFadeActive = fadeConfig.top > 0 || fadeConfig.bottom > 0 || fadeConfig.left > 0 || fadeConfig.right > 0;
-
-    setIsExporting(true); 
-    setExportPhase(isEdgeFadeActive ? 'جاري تطبيق الشفافية على الصور (Baking)...' : 'جاري ضغط الصور وإعادة بناء ملف SVGA...');
-    
-    try {
-        if (metadata.type === 'SVGA') {
-            let buffer: ArrayBuffer;
-            if (metadata.originalFile) {
-                buffer = await metadata.originalFile.arrayBuffer();
-            } else if (metadata.fileUrl) {
-                const res = await fetch(metadata.fileUrl);
-                buffer = await res.arrayBuffer();
-            } else {
-                throw new Error("No original file available.");
-            }
-
-            const uint8Array = new Uint8Array(buffer);
-            const isZip = uint8Array[0] === 0x50 && uint8Array[1] === 0x4B && uint8Array[2] === 0x03 && uint8Array[3] === 0x04;
-
-            const root = protobuf.parse(svgaSchema).root;
-            const MovieEntity = root.lookupType("com.opensource.svga.MovieEntity");
-            
-            let message: any;
-
-            if (isZip) {
-                const JSZip = (window as any).JSZip;
-                if (!JSZip) throw new Error("JSZip not loaded");
-                const zip = await JSZip.loadAsync(buffer);
-                const binaryFile = zip.file("movie.binary");
-                if (!binaryFile) {
-                    throw new Error("Invalid SVGA 1.0 file: movie.binary not found.");
-                }
-                const binaryData = await binaryFile.async("uint8array");
-                message = MovieEntity.decode(binaryData);
-                
-                message.images = message.images || {};
-                for (const filename of Object.keys(zip.files)) {
-                    if (filename.endsWith('.png') || filename.endsWith('.jpg') || filename.endsWith('.jpeg')) {
-                        const key = filename.replace(/\.(png|jpg|jpeg)$/, '');
-                        const imgData = await zip.file(filename)?.async("uint8array");
-                        if (imgData) {
-                            message.images[key] = imgData;
-                        }
-                    }
-                }
-            } else {
-                const inflated = pako.inflate(uint8Array);
-                message = MovieEntity.decode(inflated);
-            }
-
-            let finalSprites = message.sprites || [];
-            if (isEx && metadata.videoItem?.sprites) {
-                // Use the current state of sprites from the editor (includes duplicated/copied ones)
-                finalSprites = JSON.parse(JSON.stringify(metadata.videoItem.sprites));
-                
-                // Ensure message.images has all keys from finalSprites
-                finalSprites.forEach((s: any) => {
-                    if (!message.images[s.imageKey]) {
-                        // Try to find the original key if it was a copy, mirror, or pair
-                        const originalKey = s.imageKey.split('_copy_')[0].split('_mirror_')[0].split('_pair_')[0];
-                        if (message.images[originalKey]) {
-                            message.images[s.imageKey] = message.images[originalKey];
-                        } else if (metadata.videoItem.images[s.imageKey]) {
-                            // Fallback to videoItem images (might be base64 string)
-                            message.images[s.imageKey] = metadata.videoItem.images[s.imageKey];
-                        }
-                    }
-                });
-            }
-
-            if (finalSprites) {
-                finalSprites = finalSprites.filter((s: any) => !deletedKeys.has(s.imageKey));
-            }
-
-            if (message.images) {
-                deletedKeys.forEach(key => {
-                    delete message.images[key];
-                });
-            }
-
-            const imagesData: Record<string, any> = message.images || {};
-            const keys = Object.keys(imagesData);
-            
-            for (let i = 0; i < keys.length; i++) {
-                const key = keys[i];
-                if (deletedKeys.has(key)) continue;
-
-                let finalBase64 = "";
-                
-                if (layerImages[key]) {
-                    finalBase64 = await getProcessedAsset(key);
-                } else {
-                    const imgData = imagesData[key];
-                    if (typeof imgData === 'string') {
-                        finalBase64 = imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`;
-                    } else {
-                        let binary = '';
-                        const len = imgData.byteLength;
-                        for (let k = 0; k < len; k++) {
-                            binary += String.fromCharCode(imgData[k]);
-                        }
-                        finalBase64 = `data:image/png;base64,${btoa(binary)}`;
-                    }
-                }
-
-                if (!finalBase64) continue;
-                
-                const hasColorTint = !!assetColors[key];
-                if (exportScale < 0.99 || isEdgeFadeActive || hasColorTint) {
-                    const img = new Image();
-                    img.src = finalBase64;
-                    await new Promise(r => img.onload = r);
-                    const canvas = document.createElement('canvas');
-                    const targetScale = exportScale < 0.99 ? exportScale : 1.0;
-                    canvas.width = Math.floor(img.width * targetScale);
-                    canvas.height = Math.floor(img.height * targetScale);
-                    
-                    const ctx = canvas.getContext('2d');
-                    if (ctx) {
-                        if (hasColorTint) {
-                            ctx.shadowColor = assetColors[key];
-                            ctx.shadowBlur = 2;
-                            ctx.shadowOffsetX = 0;
-                            ctx.shadowOffsetY = 0;
-                        }
-
-                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        
-                        if (isEdgeFadeActive) {
-                            applyTransparencyEffects(ctx, canvas.width, canvas.height);
-                        }
-
-                        finalBase64 = canvas.toDataURL('image/png');
-                    }
-                }
-
-                const binaryString = atob(finalBase64.split(',')[1]);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let j = 0; j < binaryString.length; j++) bytes[j] = binaryString.charCodeAt(j);
-                imagesData[key] = bytes;
-                
-                if (i % 10 === 0) {
-                    setProgress(Math.floor((i / keys.length) * 100));
-                    await new Promise(r => setTimeout(r, 0));
-                }
-            }
-            
-            message.images = imagesData;
-
-            const origW = message.params.viewBoxWidth;
-            const origH = message.params.viewBoxHeight;
-            const scaleX = videoWidth / origW;
-            const scaleY = videoHeight / origH;
-            
-            const fitScale = Math.min(scaleX, scaleY);
-            const fitOffsetX = (videoWidth - origW * fitScale) / 2;
-            const fitOffsetY = (videoHeight - origH * fitScale) / 2;
-
-            if (finalSprites) {
-                finalSprites.forEach((sprite: any) => {
-                    if (sprite.frames) {
-                        sprite.frames.forEach((frame: any) => {
-                            const cx = videoWidth / 2;
-                            const cy = videoHeight / 2;
-                            const totalScale = fitScale * svgaScale;
-
-                            if (frame.layout) {
-                                let fx = frame.layout.x * fitScale + fitOffsetX;
-                                let fy = frame.layout.y * fitScale + fitOffsetY;
-                                let fw = frame.layout.width * fitScale;
-                                let fh = frame.layout.height * fitScale;
-
-                                frame.layout.x = (fx - cx) * svgaScale + cx + svgaPos.x;
-                                frame.layout.y = (fy - cy) * svgaScale + cy + svgaPos.y;
-                                frame.layout.width = fw * svgaScale;
-                                frame.layout.height = fh * svgaScale;
-                            }
-
-                            if (frame.transform) {
-                                if (frame.layout) {
-                                    frame.transform.tx *= totalScale;
-                                    frame.transform.ty *= totalScale;
-                                } else {
-                                     let ftx = frame.transform.tx * fitScale + fitOffsetX;
-                                     let fty = frame.transform.ty * fitScale + fitOffsetY;
-                                     
-                                     frame.transform.tx = (ftx - cx) * svgaScale + cx + svgaPos.x;
-                                     frame.transform.ty = (fty - cy) * svgaScale + cy + svgaPos.y;
-                                     
-                                     frame.transform.a *= totalScale;
-                                     frame.transform.b *= totalScale;
-                                     frame.transform.c *= totalScale;
-                                     frame.transform.d *= totalScale;
-                                }
-                            }
-                        });
-                    }
-                });
-            }
-
-            message.sprites = finalSprites;
-            message.params.viewBoxWidth = videoWidth;
-            message.params.viewBoxHeight = videoHeight;
-
-            const backLayers = customLayers.filter(l => l.zIndexMode === 'back').reverse();
-            for (const layer of backLayers) {
-                try {
-                    const layerKey = layer.id;
-                    let bytes: Uint8Array | null = null;
-
-                    if (layer.url.startsWith('blob:')) {
-                        const response = await fetch(layer.url);
-                        const arrayBuffer = await response.arrayBuffer();
-                        bytes = new Uint8Array(arrayBuffer);
-                    } else if (layer.url.includes(',')) {
-                        const binary = atob(layer.url.split(',')[1]);
-                        bytes = new Uint8Array(binary.length);
-                        for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
-                    }
-
-                    if (!bytes) continue;
-                    message.images[layerKey] = bytes;
-
-                    const finalWidth = layer.width * layer.scale;
-                    const finalHeight = layer.height * layer.scale;
-                    const layerFrame = {
-                        alpha: 1.0,
-                        layout: { 
-                            x: parseFloat(layer.x.toString()), 
-                            y: parseFloat(layer.y.toString()), 
-                            width: parseFloat(finalWidth.toString()), 
-                            height: parseFloat(finalHeight.toString()) 
-                        },
-                        transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
-                    };
-                    if (!message.sprites) message.sprites = [];
-                    message.sprites.unshift({ imageKey: layerKey, frames: Array(message.params.frames || 1).fill(layerFrame) });
-                } catch (e) {
-                    console.error("Failed to process back layer:", layer.id, e);
-                }
-            }
-
-            const frontLayers = customLayers.filter(l => l.zIndexMode === 'front');
-            for (const layer of frontLayers) {
-                try {
-                    const layerKey = layer.id;
-                    let bytes: Uint8Array | null = null;
-
-                    if (layer.url.startsWith('blob:')) {
-                        const response = await fetch(layer.url);
-                        const arrayBuffer = await response.arrayBuffer();
-                        bytes = new Uint8Array(arrayBuffer);
-                    } else if (layer.url.includes(',')) {
-                        const binary = atob(layer.url.split(',')[1]);
-                        bytes = new Uint8Array(binary.length);
-                        for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
-                    }
-
-                    if (!bytes) continue;
-                    message.images[layerKey] = bytes;
-
-                    const finalWidth = layer.width * layer.scale;
-                    const finalHeight = layer.height * layer.scale;
-                    const layerFrame = {
-                        alpha: 1.0,
-                        layout: { 
-                            x: parseFloat(layer.x.toString()), 
-                            y: parseFloat(layer.y.toString()), 
-                            width: parseFloat(finalWidth.toString()), 
-                            height: parseFloat(finalHeight.toString()) 
-                        },
-                        transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
-                    };
-                    if (!message.sprites) message.sprites = [];
-                    message.sprites.push({ imageKey: layerKey, frames: Array(message.params.frames || 1).fill(layerFrame) });
-                } catch (e) {
-                    console.error("Failed to process front layer:", layer.id, e);
-                }
-            }
-
-            const wmKey = "quantum_wm_layer_fixed";
-            if (watermark) {
-                const binary = atob(watermark.split(',')[1]);
-                const bytes = new Uint8Array(binary.length);
-                for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
-                message.images[wmKey] = bytes;
-
-                const wmSize = await getImageSize(watermark);
-                const wmWidth = videoWidth * wmScale;
-                const wmHeight = wmWidth * (wmSize.h / wmSize.w);
-                const wmX = (videoWidth / 2) - (wmWidth / 2) + wmPos.x;
-                const wmY = (videoHeight / 2) - (wmHeight / 2) + wmPos.y;
-                
-                const wmFrame = {
-                    alpha: 1.0,
-                    layout: { x: wmX || 0, y: wmY || 0, width: wmWidth, height: wmHeight },
-                    transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
-                };
-                if (!message.sprites) message.sprites = [];
-                message.sprites.push({
-                    imageKey: wmKey,
-                    frames: Array(message.params.frames || 1).fill(wmFrame)
-                });
-            }
-
-            if (audioUrl) {
-                const audioKey = "quantum_audio_track";
-                let bytes: Uint8Array | null = null;
-                
-                if (audioFile) {
-                    const arrayBuffer = await audioFile.arrayBuffer();
-                    bytes = new Uint8Array(arrayBuffer);
-                } else if (audioUrl === originalAudioUrl) {
-                     bytes = null;
-                } else {
-                    try {
-                        const response = await fetch(audioUrl);
-                        const arrayBuffer = await response.arrayBuffer();
-                        bytes = new Uint8Array(arrayBuffer);
-                    } catch (e) { console.error("Failed to fetch audio", e); }
-                }
-
-                if (bytes) {
-                    message.images[audioKey] = bytes; 
-                    message.audios = [{
-                        audioKey: audioKey,
-                        startFrame: 0,
-                        endFrame: message.params.frames || 0,
-                        startTime: 0,
-                        totalTime: Math.floor(((message.params.frames || 0) / (message.params.fps || 30)) * 1000)
-                    }];
-                }
-            } else {
-                message.audios = [];
-            }
-
-            const bufferOut = MovieEntity.encode(message).finish();
-            const compressedBuffer = pako.deflate(bufferOut);
-            
-            const link = document.createElement("a");
-            link.href = URL.createObjectURL(new Blob([compressedBuffer]));
-            link.download = `${metadata.name.replace('.svga','')}_Quantum_${isEx ? 'EX_' : ''}${Math.round(exportScale*100)}.svga`;
-            link.click();
-            setProgress(100);
-        } else {
-            const root = protobuf.parse(svgaSchema).root;
-            const MovieEntity = root.lookupType("com.opensource.svga.MovieEntity");
-            
-            const imagesData: Record<string, Uint8Array> = {};
-            const audioList: any[] = [...(metadata.videoItem.audios || [])];
-            
-            let finalSprites = (metadata.videoItem.sprites || []).filter((s: any) => !deletedKeys.has(s.imageKey)).map((s: any) => {
-                return JSON.parse(JSON.stringify(s));
-            });
-
-            const allImageKeys = new Set<string>();
-            (metadata.videoItem.sprites || []).forEach((s: any) => allImageKeys.add(s.imageKey));
-            Object.keys(layerImages).forEach(k => allImageKeys.add(k));
-
-            const keys = Array.from(allImageKeys);
-            for (let i = 0; i < keys.length; i++) {
-                const key = keys[i];
-                if (deletedKeys.has(key)) continue;
-                if (imagesData[key]) continue; 
-
-                let finalBase64 = "";
-                
-                if (layerImages[key]) {
-                    finalBase64 = await getProcessedAsset(key);
-                } 
-                else if (metadata.videoItem.images[key]) {
-                    const imgData = metadata.videoItem.images[key];
-                    if (typeof imgData === 'string') {
-                         finalBase64 = imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`;
-                    } else if (imgData instanceof Uint8Array) {
-                         let binary = '';
-                         const len = imgData.byteLength;
-                         for (let k = 0; k < len; k++) {
-                             binary += String.fromCharCode(imgData[k]);
-                         }
-                         finalBase64 = `data:image/png;base64,${btoa(binary)}`;
-                    }
-                }
-
-                if (!finalBase64) continue;
-                
-                const hasColorTint = !!assetColors[key];
-                if (exportScale < 0.99 || isEdgeFadeActive || hasColorTint) {
-                    const img = new Image();
-                    img.src = finalBase64;
-                    await new Promise(r => img.onload = r);
-                    const canvas = document.createElement('canvas');
-                    const targetScale = exportScale < 0.99 ? exportScale : 1.0;
-                    canvas.width = Math.floor(img.width * targetScale);
-                    canvas.height = Math.floor(img.height * targetScale);
-                    
-                    const ctx = canvas.getContext('2d');
-                    if (ctx) {
-                        if (hasColorTint) {
-                            ctx.shadowColor = assetColors[key];
-                            ctx.shadowBlur = 2;
-                            ctx.shadowOffsetX = 0;
-                            ctx.shadowOffsetY = 0;
-                        }
-
-                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-                        
-                        if (isEdgeFadeActive) {
-                            applyTransparencyEffects(ctx, canvas.width, canvas.height);
-                        }
-
-                        finalBase64 = canvas.toDataURL('image/png');
-                    }
-                }
-
-                const binaryString = atob(finalBase64.split(',')[1]);
-                const bytes = new Uint8Array(binaryString.length);
-                for (let j = 0; j < binaryString.length; j++) bytes[j] = binaryString.charCodeAt(j);
-                imagesData[key] = bytes;
-                
-                if (i % 10 === 0) {
-                    setProgress(Math.floor((i / keys.length) * 100));
-                    await new Promise(r => setTimeout(r, 0));
-                }
-            }
-
-            const origW = metadata.videoItem.videoSize.width;
-            const origH = metadata.videoItem.videoSize.height;
-            const scaleX = videoWidth / origW;
-            const scaleY = videoHeight / origH;
-            
-            const fitScale = Math.min(scaleX, scaleY);
-            const fitOffsetX = (videoWidth - origW * fitScale) / 2;
-            const fitOffsetY = (videoHeight - origH * fitScale) / 2;
-
-            finalSprites.forEach((sprite: any) => {
-                sprite.frames.forEach((frame: any) => {
-                    const cx = videoWidth / 2;
-                    const cy = videoHeight / 2;
-                    const totalScale = fitScale * svgaScale;
-
-                    if (frame.layout) {
-                        let fx = frame.layout.x * fitScale + fitOffsetX;
-                        let fy = frame.layout.y * fitScale + fitOffsetY;
-                        let fw = frame.layout.width * fitScale;
-                        let fh = frame.layout.height * fitScale;
-
-                        frame.layout.x = (fx - cx) * svgaScale + cx + svgaPos.x;
-                        frame.layout.y = (fy - cy) * svgaScale + cy + svgaPos.y;
-                        frame.layout.width = fw * svgaScale;
-                        frame.layout.height = fh * svgaScale;
-                    }
-
-                    if (frame.transform) {
-                        if (frame.layout) {
-                            frame.transform.tx *= totalScale;
-                            frame.transform.ty *= totalScale;
-                        } 
-                        else {
-                             let ftx = frame.transform.tx * fitScale + fitOffsetX;
-                             let fty = frame.transform.ty * fitScale + fitOffsetY;
-                             
-                             frame.transform.tx = (ftx - cx) * svgaScale + cx + svgaPos.x;
-                             frame.transform.ty = (fty - cy) * svgaScale + cy + svgaPos.y;
-                             
-                             frame.transform.a *= totalScale;
-                             frame.transform.b *= totalScale;
-                             frame.transform.c *= totalScale;
-                             frame.transform.d *= totalScale;
-                        }
-                    }
-                });
-            });
-
-            const backLayers = customLayers.filter(l => l.zIndexMode === 'back').reverse();
-            
-            for (const layer of backLayers) {
-                try {
-                    const layerKey = layer.id;
-                    let bytes: Uint8Array | null = null;
-
-                    if (layer.url.startsWith('blob:')) {
-                        const response = await fetch(layer.url);
-                        const arrayBuffer = await response.arrayBuffer();
-                        bytes = new Uint8Array(arrayBuffer);
-                    } else if (layer.url.includes(',')) {
-                        const binary = atob(layer.url.split(',')[1]);
-                        bytes = new Uint8Array(binary.length);
-                        for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
-                    }
-
-                    if (!bytes) continue;
-                    imagesData[layerKey] = bytes;
-
-                    const finalWidth = layer.width * layer.scale;
-                    const finalHeight = layer.height * layer.scale;
-                    const layerFrame = {
-                        alpha: 1.0,
-                        layout: { 
-                            x: parseFloat(layer.x.toString()), 
-                            y: parseFloat(layer.y.toString()), 
-                            width: parseFloat(finalWidth.toString()), 
-                            height: parseFloat(finalHeight.toString()) 
-                        },
-                        transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
-                    };
-                    finalSprites.unshift({ imageKey: layerKey, frames: Array(metadata.frames || 1).fill(layerFrame) });
-                } catch (e) {
-                    console.error("Failed to process back layer:", layer.id, e);
-                }
-            }
-
-            const frontLayers = customLayers.filter(l => l.zIndexMode === 'front');
-            for (const layer of frontLayers) {
-                try {
-                    const layerKey = layer.id;
-                    let bytes: Uint8Array | null = null;
-
-                    if (layer.url.startsWith('blob:')) {
-                        const response = await fetch(layer.url);
-                        const arrayBuffer = await response.arrayBuffer();
-                        bytes = new Uint8Array(arrayBuffer);
-                    } else if (layer.url.includes(',')) {
-                        const binary = atob(layer.url.split(',')[1]);
-                        bytes = new Uint8Array(binary.length);
-                        for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
-                    }
-
-                    if (!bytes) continue;
-                    imagesData[layerKey] = bytes;
-
-                    const finalWidth = layer.width * layer.scale;
-                    const finalHeight = layer.height * layer.scale;
-                    const layerFrame = {
-                        alpha: 1.0,
-                        layout: { 
-                            x: parseFloat(layer.x.toString()), 
-                            y: parseFloat(layer.y.toString()), 
-                            width: parseFloat(finalWidth.toString()), 
-                            height: parseFloat(finalHeight.toString()) 
-                        },
-                        transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
-                    };
-                    finalSprites.push({ imageKey: layerKey, frames: Array(metadata.frames || 1).fill(layerFrame) });
-                } catch (e) {
-                    console.error("Failed to process front layer:", layer.id, e);
-                }
-            }
-
-            const wmKey = "quantum_wm_layer_fixed";
-            if (watermark) {
-                const binary = atob(watermark.split(',')[1]);
-                const bytes = new Uint8Array(binary.length);
-                for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
-                imagesData[wmKey] = bytes;
-
-                const wmSize = await getImageSize(watermark);
-                const wmWidth = videoWidth * wmScale;
-                const wmHeight = wmWidth * (wmSize.h / wmSize.w);
-                const wmX = (videoWidth / 2) - (wmWidth / 2) + wmPos.x;
-                const wmY = (videoHeight / 2) - (wmHeight / 2) + wmPos.y;
-                
-                const wmFrame = {
-                    alpha: 1.0,
-                    layout: { x: wmX || 0, y: wmY || 0, width: wmWidth, height: wmHeight },
-                    transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
-                };
-                finalSprites.push({
-                    imageKey: wmKey,
-                    frames: Array(metadata.frames || 1).fill(wmFrame)
-                });
-            }
-
-            if (audioUrl) {
-                const audioKey = "quantum_audio_track";
-                let bytes: Uint8Array | null = null;
-                
-                if (audioFile) {
-                    const arrayBuffer = await audioFile.arrayBuffer();
-                    bytes = new Uint8Array(arrayBuffer);
-                } 
-                else if (audioUrl === originalAudioUrl) {
-                     try {
-                        const response = await fetch(audioUrl);
-                        const arrayBuffer = await response.arrayBuffer();
-                        bytes = new Uint8Array(arrayBuffer);
-                     } catch (e) { console.error("Failed to fetch audio blob", e); }
-                }
-                else {
-                    try {
-                        const response = await fetch(audioUrl);
-                        const arrayBuffer = await response.arrayBuffer();
-                        bytes = new Uint8Array(arrayBuffer);
-                    } catch (e) { console.error("Failed to fetch audio", e); }
-                }
-
-                if (bytes) {
-                    imagesData[audioKey] = bytes; 
-                    audioList.length = 0; 
-                    audioList.push({
-                        audioKey: audioKey,
-                        startFrame: 0,
-                        endFrame: metadata.frames || 0,
-                        startTime: 0,
-                        totalTime: Math.floor(((metadata.frames || 0) / (metadata.fps || 30)) * 1000)
-                    });
-                }
-            }
-
-            const payload = { 
-                version: "2.0", 
-                params: { 
-                    viewBoxWidth: videoWidth, 
-                    viewBoxHeight: videoHeight, 
-                    fps: metadata.fps || 30, 
-                    frames: metadata.frames || 0 
-                }, 
-                images: imagesData, 
-                sprites: finalSprites,
-                audios: audioList
-            };
-
-            const buffer = MovieEntity.encode(MovieEntity.create(payload)).finish();
-            const compressedBuffer = pako.deflate(buffer);
-            
-            const link = document.createElement("a");
-            link.href = URL.createObjectURL(new Blob([compressedBuffer]));
-            link.download = `${metadata.name.replace('.svga','')}_Quantum_${Math.round(exportScale*100)}.svga`;
-            link.click();
-            setProgress(100);
-        }
-    } catch (e) {
-        console.error(e);
-        alert("فشل التصدير: " + (e as any).message);
-    } finally { 
-        setTimeout(() => setIsExporting(false), 800); 
-    }
-  };
-
-  const handleExportSVGA2_0EX = async () => {
-      // This is the EX version that can be modified independently
-      await handleExportSVGA2_0(true);
-  };
-
   const handleMainExport = async (formatOverride?: string | any) => {
     const currentFormat = (typeof formatOverride === 'string' && formatOverride) ? formatOverride : selectedFormat;
+
+    if (!currentUser) {
+      onLoginRequired();
+      return;
+    }
 
     // Special handling for VAP 1.0.5 - Handled separately to enforce subscription/permission without consuming free attempts
     if (currentFormat === 'VAP 1.0.5') {
@@ -4699,10 +4138,30 @@ if (!this.JSON) { this.JSON = {}; }
       return;
     }
 
+    // Enforce restriction check again
+    let isAllowed = !currentUser.allowedExportFormat || 
+        (Array.isArray(currentUser.allowedExportFormat) 
+            ? currentUser.allowedExportFormat.includes(currentFormat) 
+            : currentUser.allowedExportFormat === currentFormat);
+
+    if (!isAllowed) {
+         alert(`عذراً، حسابك غير مصرح له بتصدير صيغة ${currentFormat}.`);
+         return;
+    }
+
     // Log Activity
     logActivity(currentUser, 'export', `Exported ${metadata.name}`, currentFormat);
 
     if (currentFormat === 'AE Project') await handleExportAEProject();
+    else if (currentFormat === 'SVGA 2.0 EX') {
+        await handleSvgaExExport({
+            metadata, videoWidth, videoHeight, exportScale, svgaScale, svgaPos,
+            layerImages, assetColors, assetColorModes, deletedKeys, customLayers, watermark,
+            wmScale, wmPos, audioUrl, audioFile, originalAudioUrl, fadeConfig,
+            applyTransparencyEffects, setProgress, setExportPhase, setIsExporting,
+            protobuf, globalQuality
+        });
+    }
     else if (currentFormat === 'Image Sequence') await handleExportImageSequence();
     else if (currentFormat === 'GIF (Animation)') await handleExportGIF();
     else if (currentFormat === 'APNG (Animation)') await handleExportAPNG();
@@ -4719,8 +4178,10 @@ if (!this.JSON) { this.JSON = {}; }
             svgaInstance.pauseAnimation();
             const originalFrame = currentFrame;
             // Use the actual FPS from the SVGA file if available to prevent frame mismatch/stuttering
-            const fps = svgaInstance.videoItem?.FPS || metadata.fps || 30;
-            const totalFrames = svgaInstance.videoItem?.frames || metadata.frames || 0;
+            const fps = metadata.fps || svgaInstance.videoItem?.FPS || 30;
+            const originalTotalFrames = svgaInstance.videoItem?.frames || metadata.frames || 0;
+            // Use recordingDuration if specified, otherwise fallback to original duration
+            const totalFrames = Math.ceil(recordingDuration * fps) || originalTotalFrames;
             
             // Ensure even dimensions for video encoding
             const safeWidth = videoWidth % 2 === 0 ? videoWidth : videoWidth - 1;
@@ -4930,7 +4391,8 @@ if (!this.JSON) { this.JSON = {}; }
             const frameDurationMicros = Math.round(1000000 / fps);
 
             for (let i = 0; i < totalFrames; i++) {
-                svgaInstance.stepToFrame(i, true);
+                // Use modulo to loop the animation if totalFrames > originalTotalFrames
+                svgaInstance.stepToFrame(i % originalTotalFrames, true);
                 
                 // Wait for frame rendering - use requestAnimationFrame to sync with paint if possible, 
                 // but here we use a small delay to allow SVGA to draw.
@@ -5076,11 +4538,641 @@ if (!this.JSON) { this.JSON = {}; }
     else if (currentFormat === 'WebP (Animated)') {
         await handleExportWebP();
     }
-    else if (currentFormat === 'SVGA 2.0') {
-        await handleExportSVGA2_0(false);
-    }
-    else if (currentFormat === 'SVGA 2.0 EX') {
-        await handleExportSVGA2_0EX();
+    else if (currentFormat === 'SVGA 2.0' && typeof protobuf !== 'undefined') {
+        const isEdgeFadeActive = fadeConfig.top > 0 || fadeConfig.bottom > 0 || fadeConfig.left > 0 || fadeConfig.right > 0;
+
+        setIsExporting(true); 
+        setExportPhase(isEdgeFadeActive ? 'جاري تطبيق الشفافية على الصور (Baking)...' : 'جاري ضغط الصور وإعادة بناء ملف SVGA...');
+        
+        try {
+            if (metadata.type === 'SVGA') {
+                let buffer: ArrayBuffer;
+                if (metadata.originalFile) {
+                    buffer = await metadata.originalFile.arrayBuffer();
+                } else if (metadata.fileUrl) {
+                    const res = await fetch(metadata.fileUrl);
+                    buffer = await res.arrayBuffer();
+                } else {
+                    throw new Error("No original file available.");
+                }
+
+                const uint8Array = new Uint8Array(buffer);
+                const isZip = uint8Array[0] === 0x50 && uint8Array[1] === 0x4B && uint8Array[2] === 0x03 && uint8Array[3] === 0x04;
+
+                const root = protobuf.parse(svgaSchema).root;
+                const MovieEntity = root.lookupType("com.opensource.svga.MovieEntity");
+                
+                let message: any;
+
+                if (isZip) {
+                    const JSZip = (window as any).JSZip;
+                    if (!JSZip) throw new Error("JSZip not loaded");
+                    const zip = await JSZip.loadAsync(buffer);
+                    const binaryFile = zip.file("movie.binary");
+                    if (!binaryFile) {
+                        throw new Error("Invalid SVGA 1.0 file: movie.binary not found.");
+                    }
+                    const binaryData = await binaryFile.async("uint8array");
+                    message = MovieEntity.decode(binaryData);
+                    
+                    message.images = message.images || {};
+                    for (const filename of Object.keys(zip.files)) {
+                        if (filename.endsWith('.png') || filename.endsWith('.jpg') || filename.endsWith('.jpeg')) {
+                            const key = filename.replace(/\.(png|jpg|jpeg)$/, '');
+                            const imgData = await zip.file(filename)?.async("uint8array");
+                            if (imgData) {
+                                message.images[key] = imgData;
+                            }
+                        }
+                    }
+                } else {
+                    const inflated = pako.inflate(uint8Array);
+                    message = MovieEntity.decode(inflated);
+                }
+
+                if (message.sprites) {
+                    message.sprites = message.sprites.filter((s: any) => !deletedKeys.has(s.imageKey));
+                }
+                if (message.images) {
+                    deletedKeys.forEach(key => {
+                        delete message.images[key];
+                    });
+                }
+
+                const imagesData: Record<string, Uint8Array> = message.images || {};
+                const keys = Object.keys(imagesData);
+                
+                for (let i = 0; i < keys.length; i++) {
+                    const key = keys[i];
+                    if (deletedKeys.has(key)) continue;
+
+                    let finalBase64 = "";
+                    
+                    if (layerImages[key]) {
+                        finalBase64 = await getProcessedAsset(key);
+                    } else {
+                        const imgData = imagesData[key];
+                        let binary = '';
+                        const len = imgData.byteLength;
+                        for (let k = 0; k < len; k++) {
+                            binary += String.fromCharCode(imgData[k]);
+                        }
+                        finalBase64 = `data:image/png;base64,${btoa(binary)}`;
+                    }
+
+                    if (!finalBase64) continue;
+                    
+                    const hasColorTint = !!assetColors[key];
+                    if (exportScale < 0.99 || isEdgeFadeActive || hasColorTint) {
+                        const img = new Image();
+                        img.src = finalBase64;
+                        await new Promise(r => img.onload = r);
+                        const canvas = document.createElement('canvas');
+                        const targetScale = exportScale < 0.99 ? exportScale : 1.0;
+                        canvas.width = Math.floor(img.width * targetScale);
+                        canvas.height = Math.floor(img.height * targetScale);
+                        
+                        const ctx = canvas.getContext('2d');
+                        if (ctx) {
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                            if (hasColorTint) {
+                                const color = assetColors[key];
+                                const mode = assetColorModes[key] || 'tint';
+                                
+                                if (mode === 'fill') {
+                                    ctx.globalCompositeOperation = 'source-in';
+                                    ctx.fillStyle = color;
+                                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                                } else {
+                                    ctx.globalCompositeOperation = 'multiply';
+                                    ctx.fillStyle = color;
+                                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                                    ctx.globalCompositeOperation = 'destination-in';
+                                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                                }
+                                ctx.globalCompositeOperation = 'source-over';
+                            }
+                            
+                            if (isEdgeFadeActive) {
+                                applyTransparencyEffects(ctx, canvas.width, canvas.height);
+                            }
+
+                            finalBase64 = canvas.toDataURL('image/png');
+                        }
+                    }
+
+                    const binaryString = atob(finalBase64.split(',')[1]);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let j = 0; j < binaryString.length; j++) bytes[j] = binaryString.charCodeAt(j);
+                    imagesData[key] = bytes;
+                    
+                    if (i % 10 === 0) {
+                        setProgress(Math.floor((i / keys.length) * 100));
+                        await new Promise(r => setTimeout(r, 0));
+                    }
+                }
+                
+                message.images = imagesData;
+
+                const origW = message.params.viewBoxWidth;
+                const origH = message.params.viewBoxHeight;
+                const scaleX = videoWidth / origW;
+                const scaleY = videoHeight / origH;
+                
+                const fitScale = Math.min(scaleX, scaleY);
+                const fitOffsetX = (videoWidth - origW * fitScale) / 2;
+                const fitOffsetY = (videoHeight - origH * fitScale) / 2;
+
+                if (message.sprites) {
+                    message.sprites.forEach((sprite: any) => {
+                        if (sprite.frames) {
+                            sprite.frames.forEach((frame: any) => {
+                                const cx = videoWidth / 2;
+                                const cy = videoHeight / 2;
+                                const totalScale = fitScale * svgaScale;
+
+                                if (frame.layout) {
+                                    let fx = frame.layout.x * fitScale + fitOffsetX;
+                                    let fy = frame.layout.y * fitScale + fitOffsetY;
+                                    let fw = frame.layout.width * fitScale;
+                                    let fh = frame.layout.height * fitScale;
+
+                                    frame.layout.x = (fx - cx) * svgaScale + cx + svgaPos.x;
+                                    frame.layout.y = (fy - cy) * svgaScale + cy + svgaPos.y;
+                                    frame.layout.width = fw * svgaScale;
+                                    frame.layout.height = fh * svgaScale;
+                                }
+
+                                if (frame.transform) {
+                                    if (frame.layout) {
+                                        frame.transform.tx *= totalScale;
+                                        frame.transform.ty *= totalScale;
+                                    } else {
+                                         let ftx = frame.transform.tx * fitScale + fitOffsetX;
+                                         let fty = frame.transform.ty * fitScale + fitOffsetY;
+                                         
+                                         frame.transform.tx = (ftx - cx) * svgaScale + cx + svgaPos.x;
+                                         frame.transform.ty = (fty - cy) * svgaScale + cy + svgaPos.y;
+                                         
+                                         frame.transform.a *= totalScale;
+                                         frame.transform.b *= totalScale;
+                                         frame.transform.c *= totalScale;
+                                         frame.transform.d *= totalScale;
+                                    }
+                                }
+                            });
+                        }
+                    });
+                }
+
+                message.params.viewBoxWidth = videoWidth;
+                message.params.viewBoxHeight = videoHeight;
+
+                const backLayers = customLayers.filter(l => l.zIndexMode === 'back').reverse();
+                for (const layer of backLayers) {
+                    try {
+                        const layerKey = layer.id;
+                        let bytes: Uint8Array | null = null;
+
+                        if (layer.url.startsWith('blob:')) {
+                            const response = await fetch(layer.url);
+                            const arrayBuffer = await response.arrayBuffer();
+                            bytes = new Uint8Array(arrayBuffer);
+                        } else if (layer.url.includes(',')) {
+                            const binary = atob(layer.url.split(',')[1]);
+                            bytes = new Uint8Array(binary.length);
+                            for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+                        }
+
+                        if (!bytes) continue;
+                        message.images[layerKey] = bytes;
+
+                        const finalWidth = layer.width * layer.scale;
+                        const finalHeight = layer.height * layer.scale;
+                        const layerFrame = {
+                            alpha: 1.0,
+                            layout: { 
+                                x: parseFloat(layer.x.toString()), 
+                                y: parseFloat(layer.y.toString()), 
+                                width: parseFloat(finalWidth.toString()), 
+                                height: parseFloat(finalHeight.toString()) 
+                            },
+                            transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
+                        };
+                        if (!message.sprites) message.sprites = [];
+                        message.sprites.unshift({ imageKey: layerKey, frames: Array(message.params.frames || 1).fill(layerFrame) });
+                    } catch (e) {
+                        console.error("Failed to process back layer:", layer.id, e);
+                    }
+                }
+
+                const frontLayers = customLayers.filter(l => l.zIndexMode === 'front');
+                for (const layer of frontLayers) {
+                    try {
+                        const layerKey = layer.id;
+                        let bytes: Uint8Array | null = null;
+
+                        if (layer.url.startsWith('blob:')) {
+                            const response = await fetch(layer.url);
+                            const arrayBuffer = await response.arrayBuffer();
+                            bytes = new Uint8Array(arrayBuffer);
+                        } else if (layer.url.includes(',')) {
+                            const binary = atob(layer.url.split(',')[1]);
+                            bytes = new Uint8Array(binary.length);
+                            for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+                        }
+
+                        if (!bytes) continue;
+                        message.images[layerKey] = bytes;
+
+                        const finalWidth = layer.width * layer.scale;
+                        const finalHeight = layer.height * layer.scale;
+                        const layerFrame = {
+                            alpha: 1.0,
+                            layout: { 
+                                x: parseFloat(layer.x.toString()), 
+                                y: parseFloat(layer.y.toString()), 
+                                width: parseFloat(finalWidth.toString()), 
+                                height: parseFloat(finalHeight.toString()) 
+                            },
+                            transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
+                        };
+                        if (!message.sprites) message.sprites = [];
+                        message.sprites.push({ imageKey: layerKey, frames: Array(message.params.frames || 1).fill(layerFrame) });
+                    } catch (e) {
+                        console.error("Failed to process front layer:", layer.id, e);
+                    }
+                }
+
+                const wmKey = "quantum_wm_layer_fixed";
+                if (watermark) {
+                    const binary = atob(watermark.split(',')[1]);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+                    message.images[wmKey] = bytes;
+
+                    const wmSize = await getImageSize(watermark);
+                    const wmWidth = videoWidth * wmScale;
+                    const wmHeight = wmWidth * (wmSize.h / wmSize.w);
+                    const wmX = (videoWidth / 2) - (wmWidth / 2) + wmPos.x;
+                    const wmY = (videoHeight / 2) - (wmHeight / 2) + wmPos.y;
+                    
+                    const wmFrame = {
+                        alpha: 1.0,
+                        layout: { x: wmX || 0, y: wmY || 0, width: wmWidth, height: wmHeight },
+                        transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
+                    };
+                    if (!message.sprites) message.sprites = [];
+                    message.sprites.push({
+                        imageKey: wmKey,
+                        frames: Array(message.params.frames || 1).fill(wmFrame)
+                    });
+                }
+
+                if (audioUrl) {
+                    const audioKey = "quantum_audio_track";
+                    let bytes: Uint8Array | null = null;
+                    
+                    if (audioFile) {
+                        const arrayBuffer = await audioFile.arrayBuffer();
+                        bytes = new Uint8Array(arrayBuffer);
+                    } else if (audioUrl === originalAudioUrl) {
+                         bytes = null;
+                    } else {
+                        try {
+                            const response = await fetch(audioUrl);
+                            const arrayBuffer = await response.arrayBuffer();
+                            bytes = new Uint8Array(arrayBuffer);
+                        } catch (e) { console.error("Failed to fetch audio", e); }
+                    }
+
+                    if (bytes) {
+                        message.images[audioKey] = bytes; 
+                        message.audios = [{
+                            audioKey: audioKey,
+                            startFrame: 0,
+                            endFrame: message.params.frames || 0,
+                            startTime: 0,
+                            totalTime: Math.floor(((message.params.frames || 0) / (message.params.fps || 30)) * 1000)
+                        }];
+                    }
+                } else {
+                    message.audios = [];
+                }
+
+                const bufferOut = MovieEntity.encode(message).finish();
+                const compressedBuffer = pako.deflate(bufferOut);
+                
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(new Blob([compressedBuffer]));
+                link.download = `${metadata.name.replace('.svga','')}_Quantum_${Math.round(exportScale*100)}.svga`;
+                link.click();
+                setProgress(100);
+            } else {
+                const root = protobuf.parse(svgaSchema).root;
+                const MovieEntity = root.lookupType("com.opensource.svga.MovieEntity");
+                
+                const imagesData: Record<string, Uint8Array> = {};
+                const audioList: any[] = [...(metadata.videoItem.audios || [])];
+                
+                let finalSprites = (metadata.videoItem.sprites || []).filter((s: any) => !deletedKeys.has(s.imageKey)).map((s: any) => {
+                    return JSON.parse(JSON.stringify(s));
+                });
+
+                const allImageKeys = new Set<string>();
+                (metadata.videoItem.sprites || []).forEach((s: any) => allImageKeys.add(s.imageKey));
+                Object.keys(layerImages).forEach(k => allImageKeys.add(k));
+
+                const keys = Array.from(allImageKeys);
+                for (let i = 0; i < keys.length; i++) {
+                    const key = keys[i];
+                    if (deletedKeys.has(key)) continue;
+                    if (imagesData[key]) continue; 
+
+                    let finalBase64 = "";
+                    
+                    if (layerImages[key]) {
+                        finalBase64 = await getProcessedAsset(key);
+                    } 
+                    else if (metadata.videoItem.images[key]) {
+                        const imgData = metadata.videoItem.images[key];
+                        if (typeof imgData === 'string') {
+                             finalBase64 = imgData.startsWith('data:') ? imgData : `data:image/png;base64,${imgData}`;
+                        } else if (imgData instanceof Uint8Array) {
+                             let binary = '';
+                             const len = imgData.byteLength;
+                             for (let k = 0; k < len; k++) {
+                                 binary += String.fromCharCode(imgData[k]);
+                             }
+                             finalBase64 = `data:image/png;base64,${btoa(binary)}`;
+                        }
+                    }
+
+                    if (!finalBase64) continue;
+                    
+                    const hasColorTint = !!assetColors[key];
+                    if (exportScale < 0.99 || isEdgeFadeActive || hasColorTint) {
+                        const img = new Image();
+                        img.src = finalBase64;
+                        await new Promise(r => img.onload = r);
+                        const canvas = document.createElement('canvas');
+                        const targetScale = exportScale < 0.99 ? exportScale : 1.0;
+                        canvas.width = Math.floor(img.width * targetScale);
+                        canvas.height = Math.floor(img.height * targetScale);
+                        
+                        const ctx = canvas.getContext('2d');
+                        if (ctx) {
+                            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                            if (hasColorTint) {
+                                const color = assetColors[key];
+                                const mode = assetColorModes[key] || 'tint';
+                                
+                                if (mode === 'fill') {
+                                    ctx.globalCompositeOperation = 'source-in';
+                                    ctx.fillStyle = color;
+                                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                                } else {
+                                    ctx.globalCompositeOperation = 'multiply';
+                                    ctx.fillStyle = color;
+                                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                                    ctx.globalCompositeOperation = 'destination-in';
+                                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                                }
+                                ctx.globalCompositeOperation = 'source-over';
+                            }
+                            
+                            if (isEdgeFadeActive) {
+                                applyTransparencyEffects(ctx, canvas.width, canvas.height);
+                            }
+
+                            finalBase64 = canvas.toDataURL('image/png');
+                        }
+                    }
+
+                    const binaryString = atob(finalBase64.split(',')[1]);
+                    const bytes = new Uint8Array(binaryString.length);
+                    for (let j = 0; j < binaryString.length; j++) bytes[j] = binaryString.charCodeAt(j);
+                    imagesData[key] = bytes;
+                    
+                    if (i % 10 === 0) {
+                        setProgress(Math.floor((i / keys.length) * 100));
+                        await new Promise(r => setTimeout(r, 0));
+                    }
+                }
+
+                const origW = metadata.videoItem.videoSize.width;
+                const origH = metadata.videoItem.videoSize.height;
+                const scaleX = videoWidth / origW;
+                const scaleY = videoHeight / origH;
+                
+                const fitScale = Math.min(scaleX, scaleY);
+                const fitOffsetX = (videoWidth - origW * fitScale) / 2;
+                const fitOffsetY = (videoHeight - origH * fitScale) / 2;
+
+                finalSprites.forEach((sprite: any) => {
+                    sprite.frames.forEach((frame: any) => {
+                        const cx = videoWidth / 2;
+                        const cy = videoHeight / 2;
+                        const totalScale = fitScale * svgaScale;
+
+                        if (frame.layout) {
+                            let fx = frame.layout.x * fitScale + fitOffsetX;
+                            let fy = frame.layout.y * fitScale + fitOffsetY;
+                            let fw = frame.layout.width * fitScale;
+                            let fh = frame.layout.height * fitScale;
+
+                            frame.layout.x = (fx - cx) * svgaScale + cx + svgaPos.x;
+                            frame.layout.y = (fy - cy) * svgaScale + cy + svgaPos.y;
+                            frame.layout.width = fw * svgaScale;
+                            frame.layout.height = fh * svgaScale;
+                        }
+
+                        if (frame.transform) {
+                            if (frame.layout) {
+                                frame.transform.tx *= totalScale;
+                                frame.transform.ty *= totalScale;
+                            } 
+                            else {
+                                 let ftx = frame.transform.tx * fitScale + fitOffsetX;
+                                 let fty = frame.transform.ty * fitScale + fitOffsetY;
+                                 
+                                 frame.transform.tx = (ftx - cx) * svgaScale + cx + svgaPos.x;
+                                 frame.transform.ty = (fty - cy) * svgaScale + cy + svgaPos.y;
+                                 
+                                 frame.transform.a *= totalScale;
+                                 frame.transform.b *= totalScale;
+                                 frame.transform.c *= totalScale;
+                                 frame.transform.d *= totalScale;
+                            }
+                        }
+                    });
+                });
+
+                const backLayers = customLayers.filter(l => l.zIndexMode === 'back').reverse();
+                
+                for (const layer of backLayers) {
+                    try {
+                        const layerKey = layer.id;
+                        let bytes: Uint8Array | null = null;
+
+                        if (layer.url.startsWith('blob:')) {
+                            const response = await fetch(layer.url);
+                            const arrayBuffer = await response.arrayBuffer();
+                            bytes = new Uint8Array(arrayBuffer);
+                        } else if (layer.url.includes(',')) {
+                            const binary = atob(layer.url.split(',')[1]);
+                            bytes = new Uint8Array(binary.length);
+                            for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+                        }
+
+                        if (!bytes) continue;
+                        imagesData[layerKey] = bytes;
+
+                        const finalWidth = layer.width * layer.scale;
+                        const finalHeight = layer.height * layer.scale;
+                        const layerFrame = {
+                            alpha: 1.0,
+                            layout: { 
+                                x: parseFloat(layer.x.toString()), 
+                                y: parseFloat(layer.y.toString()), 
+                                width: parseFloat(finalWidth.toString()), 
+                                height: parseFloat(finalHeight.toString()) 
+                            },
+                            transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
+                        };
+                        finalSprites.unshift({ imageKey: layerKey, frames: Array(metadata.frames || 1).fill(layerFrame) });
+                    } catch (e) {
+                        console.error("Failed to process back layer:", layer.id, e);
+                    }
+                }
+
+                const frontLayers = customLayers.filter(l => l.zIndexMode === 'front');
+                for (const layer of frontLayers) {
+                    try {
+                        const layerKey = layer.id;
+                        let bytes: Uint8Array | null = null;
+
+                        if (layer.url.startsWith('blob:')) {
+                            const response = await fetch(layer.url);
+                            const arrayBuffer = await response.arrayBuffer();
+                            bytes = new Uint8Array(arrayBuffer);
+                        } else if (layer.url.includes(',')) {
+                            const binary = atob(layer.url.split(',')[1]);
+                            bytes = new Uint8Array(binary.length);
+                            for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+                        }
+
+                        if (!bytes) continue;
+                        imagesData[layerKey] = bytes;
+
+                        const finalWidth = layer.width * layer.scale;
+                        const finalHeight = layer.height * layer.scale;
+                        const layerFrame = {
+                            alpha: 1.0,
+                            layout: { 
+                                x: parseFloat(layer.x.toString()), 
+                                y: parseFloat(layer.y.toString()), 
+                                width: parseFloat(finalWidth.toString()), 
+                                height: parseFloat(finalHeight.toString()) 
+                            },
+                            transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
+                        };
+                        finalSprites.push({ imageKey: layerKey, frames: Array(metadata.frames || 1).fill(layerFrame) });
+                    } catch (e) {
+                        console.error("Failed to process front layer:", layer.id, e);
+                    }
+                }
+
+                const wmKey = "quantum_wm_layer_fixed";
+                if (watermark) {
+                    const binary = atob(watermark.split(',')[1]);
+                    const bytes = new Uint8Array(binary.length);
+                    for (let j = 0; j < binary.length; j++) bytes[j] = binary.charCodeAt(j);
+                    imagesData[wmKey] = bytes;
+
+                    const wmSize = await getImageSize(watermark);
+                    const wmWidth = videoWidth * wmScale;
+                    const wmHeight = wmWidth * (wmSize.h / wmSize.w);
+                    const wmX = (videoWidth / 2) - (wmWidth / 2) + wmPos.x;
+                    const wmY = (videoHeight / 2) - (wmHeight / 2) + wmPos.y;
+                    
+                    const wmFrame = {
+                        alpha: 1.0,
+                        layout: { x: wmX || 0, y: wmY || 0, width: wmWidth, height: wmHeight },
+                        transform: { a: 1, b: 0, c: 0, d: 1, tx: 0, ty: 0 }
+                    };
+                    finalSprites.push({
+                        imageKey: wmKey,
+                        frames: Array(metadata.frames || 1).fill(wmFrame)
+                    });
+                }
+
+                if (audioUrl) {
+                    const audioKey = "quantum_audio_track";
+                    let bytes: Uint8Array | null = null;
+                    
+                    if (audioFile) {
+                        const arrayBuffer = await audioFile.arrayBuffer();
+                        bytes = new Uint8Array(arrayBuffer);
+                    } 
+                    else if (audioUrl === originalAudioUrl) {
+                         try {
+                            const response = await fetch(audioUrl);
+                            const arrayBuffer = await response.arrayBuffer();
+                            bytes = new Uint8Array(arrayBuffer);
+                         } catch (e) { console.error("Failed to fetch audio blob", e); }
+                    }
+                    else {
+                        try {
+                            const response = await fetch(audioUrl);
+                            const arrayBuffer = await response.arrayBuffer();
+                            bytes = new Uint8Array(arrayBuffer);
+                        } catch (e) { console.error("Failed to fetch audio", e); }
+                    }
+
+                    if (bytes) {
+                        imagesData[audioKey] = bytes; 
+                        audioList.length = 0; 
+                        audioList.push({
+                            audioKey: audioKey,
+                            startFrame: 0,
+                            endFrame: metadata.frames || 0,
+                            startTime: 0,
+                            totalTime: Math.floor(((metadata.frames || 0) / (metadata.fps || 30)) * 1000)
+                        });
+                    }
+                }
+
+                const payload = { 
+                    version: "2.0", 
+                    params: { 
+                        viewBoxWidth: videoWidth, 
+                        viewBoxHeight: videoHeight, 
+                        fps: metadata.fps || 30, 
+                        frames: metadata.frames || 0 
+                    }, 
+                    images: imagesData, 
+                    sprites: finalSprites,
+                    audios: audioList
+                };
+
+                const buffer = MovieEntity.encode(MovieEntity.create(payload)).finish();
+                const compressedBuffer = pako.deflate(buffer);
+                
+                const link = document.createElement("a");
+                link.href = URL.createObjectURL(new Blob([compressedBuffer]));
+                link.download = `${metadata.name.replace('.svga','')}_Quantum_${Math.round(exportScale*100)}.svga`;
+                link.click();
+                setProgress(100);
+            }
+        } catch (e) {
+            console.error(e);
+            alert("فشل التصدير: " + (e as any).message);
+        } finally { 
+            setTimeout(() => setIsExporting(false), 800); 
+        }
     }
   };
 
@@ -5125,32 +5217,32 @@ if (!this.JSON) { this.JSON = {}; }
         </div>
       )}
 
-      <div className="flex flex-col sm:flex-row items-center justify-between p-6 sm:p-10 rounded-[3rem] border border-white/5 gap-6 shadow-2xl bg-slate-900/40 backdrop-blur-3xl relative overflow-hidden group">
+      <div className="flex flex-col lg:flex-row items-center justify-between p-4 sm:p-6 lg:p-10 rounded-2xl sm:rounded-[3rem] border border-white/5 gap-4 sm:gap-6 shadow-2xl bg-slate-900/40 backdrop-blur-3xl relative overflow-hidden group">
         <div className="absolute top-0 right-0 w-full h-1 bg-gradient-to-l from-transparent via-sky-500/30 to-transparent"></div>
-        <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-8 text-center sm:text-right">
-          <div className="w-16 h-16 sm:w-20 sm:h-20 bg-gradient-to-br from-sky-400 to-indigo-600 rounded-[2rem] flex items-center justify-center text-white shadow-glow-sky text-3xl">
+        <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-8 text-center sm:text-right w-full lg:w-auto">
+          <div className="w-12 h-12 sm:w-16 sm:h-16 lg:w-20 lg:h-20 bg-gradient-to-br from-sky-400 to-indigo-600 rounded-xl sm:rounded-[2rem] flex items-center justify-center text-white shadow-glow-sky text-xl sm:text-3xl">
              <span className="drop-shadow-lg animate-pulse">⚛️</span>
           </div>
-          <div>
-            <h2 className="text-xl sm:text-3xl font-black text-white tracking-tight mb-1">{metadata.name}</h2>
+          <div className="flex-1 min-w-0">
+            <h2 className="text-lg sm:text-xl lg:text-3xl font-black text-white tracking-tight mb-1 truncate">{metadata.name}</h2>
             <div className="flex flex-wrap justify-center sm:justify-start items-center gap-2 sm:gap-4">
-               <span className="px-3 py-1 bg-sky-500/10 text-sky-400 text-[10px] font-black rounded-lg border border-sky-500/20 uppercase tracking-[0.2em]">{videoWidth}X{videoHeight}</span>
-               <span className="text-[10px] sm:text-[12px] text-slate-500 font-bold uppercase tracking-[0.3em]">{metadata.frames} إطارات</span>
+               <span className="px-2 py-0.5 sm:px-3 sm:py-1 bg-sky-500/10 text-sky-400 text-[8px] sm:text-[10px] font-black rounded-lg border border-sky-500/20 uppercase tracking-[0.1em] sm:tracking-[0.2em]">{videoWidth}X{videoHeight}</span>
+               <span className="text-[8px] sm:text-[10px] lg:text-[12px] text-slate-500 font-bold uppercase tracking-[0.1em] sm:tracking-[0.3em]">{metadata.frames} إطارات</span>
             </div>
           </div>
         </div>
-        <div className="flex gap-3">
-            <button onClick={() => replaceSvgaInputRef.current?.click()} className="w-full sm:w-auto px-6 py-5 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 hover:text-sky-300 rounded-[2rem] border border-sky-500/20 transition-all font-black uppercase text-[10px] tracking-widest active:scale-95 flex items-center gap-2">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+        <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 w-full lg:w-auto">
+            <button onClick={() => replaceSvgaInputRef.current?.click()} className="flex-1 lg:flex-none px-4 sm:px-6 py-3 sm:py-5 bg-sky-500/10 hover:bg-sky-500/20 text-sky-400 hover:text-sky-300 rounded-xl sm:rounded-[2rem] border border-sky-500/20 transition-all font-black uppercase text-[8px] sm:text-[10px] tracking-widest active:scale-95 flex items-center justify-center gap-2">
+                <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                 تغيير ملف SVGA
             </button>
-            <button onClick={onCancel} className="w-full sm:w-auto px-10 py-5 bg-white/5 hover:bg-red-500/10 text-slate-400 hover:text-red-400 rounded-[2rem] border border-white/10 transition-all font-black uppercase text-[10px] tracking-widest active:scale-95">إلغاء المعالجة</button>
+            <button onClick={onCancel} className="flex-1 lg:flex-none px-4 sm:px-10 py-3 sm:py-5 bg-white/5 hover:bg-red-500/10 text-slate-400 hover:text-red-400 rounded-xl sm:rounded-[2rem] border border-white/10 transition-all font-black uppercase text-[8px] sm:text-[10px] tracking-widest active:scale-95">إلغاء المعالجة</button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 sm:gap-8 overflow-visible">
-        <div className="xl:col-span-7 flex flex-col gap-0 overflow-visible">
-          <div className="relative flex items-center justify-center w-full overflow-hidden rounded-[3rem] border border-white/10 shadow-3xl bg-black/20" style={{ height: `${videoHeight * scale}px` }}>
+        <div className="xl:col-span-7 flex flex-col gap-4 sm:gap-0 overflow-visible">
+          <div className="relative flex items-center justify-center w-full overflow-hidden rounded-2xl sm:rounded-[3rem] border border-white/10 shadow-3xl bg-black/20" style={{ height: `${Math.max(200, videoHeight * scale)}px` }}>
               <div ref={containerRef} className="absolute inset-0 flex items-center justify-center transition-transform duration-500 ease-out origin-center pointer-events-none" style={{ transform: `scale(${scale})` }}>
                   <div className="relative overflow-hidden shadow-2xl pointer-events-auto" style={{ 
                       width: `${videoWidth}px`, 
@@ -5237,25 +5329,27 @@ if (!this.JSON) { this.JSON = {}; }
               </div>
           </div>
 
-          <div className="mt-4 w-full bg-slate-950/60 backdrop-blur-3xl p-6 sm:p-8 rounded-[2.5rem] border border-white/5 flex flex-col sm:flex-row items-center gap-6 sm:gap-8 shadow-2xl relative z-20">
-               <button onClick={handlePlayToggle} className="w-16 h-16 bg-sky-500 hover:bg-sky-400 text-white rounded-2xl flex items-center justify-center shadow-glow-sky transition-all active:scale-90">
-                 {isPlaying ? <svg className="w-8 h-8" fill="currentColor" viewBox="0 0 20 20"><path d="M5 4h3v12H5V4zm7 0h3v12h-3V4z"/></svg> : <svg className="w-8 h-8 mr-1" fill="currentColor" viewBox="0 0 20 20"><path d="M4.5 3.5l11 6.5-11 6.5z"/></svg>}
-               </button>
-               <button onClick={handleDownloadFrame} className="w-16 h-16 bg-white/5 hover:bg-white/10 text-white rounded-2xl flex items-center justify-center border border-white/10 transition-all active:scale-90" title="تنزيل الإطار الحالي">
-                   <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
-               </button>
+          <div className="mt-4 w-full bg-slate-950/60 backdrop-blur-3xl p-4 sm:p-8 rounded-2xl sm:rounded-[2.5rem] border border-white/5 flex flex-col lg:flex-row items-center gap-4 sm:gap-8 shadow-2xl relative z-20">
+               <div className="flex items-center gap-4 w-full lg:w-auto">
+                 <button onClick={handlePlayToggle} className="w-12 h-12 sm:w-16 sm:h-16 bg-sky-500 hover:bg-sky-400 text-white rounded-xl sm:rounded-2xl flex items-center justify-center shadow-glow-sky transition-all active:scale-90 flex-shrink-0">
+                   {isPlaying ? <svg className="w-6 h-6 sm:w-8 sm:h-8" fill="currentColor" viewBox="0 0 20 20"><path d="M5 4h3v12H5V4zm7 0h3v12h-3V4z"/></svg> : <svg className="w-6 h-6 sm:w-8 sm:h-8 mr-1" fill="currentColor" viewBox="0 0 20 20"><path d="M4.5 3.5l11 6.5-11 6.5z"/></svg>}
+                 </button>
+                 <button onClick={handleDownloadFrame} className="w-12 h-12 sm:w-16 sm:h-16 bg-white/5 hover:bg-white/10 text-white rounded-xl sm:rounded-2xl flex items-center justify-center border border-white/10 transition-all active:scale-90 flex-shrink-0" title="تنزيل الإطار الحالي">
+                     <svg className="w-5 h-5 sm:w-6 sm:h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                 </button>
+               </div>
                <div className="flex-1 w-full flex flex-col gap-3">
                   <div className="flex justify-between items-center px-1">
                     <div className="flex items-center gap-2">
-                       <span className="text-white font-black text-xs px-3 py-1 bg-white/5 rounded-lg border border-white/5">{currentFrame} / {metadata.frames}</span>
+                       <span className="text-white font-black text-[10px] px-2 py-0.5 sm:px-3 sm:py-1 bg-white/5 rounded-lg border border-white/5">{currentFrame} / {metadata.frames || 0} ({((currentFrame) / (metadata.fps || 20)).toFixed(2)}s / {((metadata.frames || 0) / (metadata.fps || 20)).toFixed(2)}s)</span>
                        {audioUrl && (
-                         <span className="flex items-center gap-1 text-[9px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20 animate-pulse">
+                         <span className="flex items-center gap-1 text-[8px] sm:text-[9px] font-black text-emerald-400 bg-emerald-500/10 px-2 py-1 rounded-lg border border-emerald-500/20 animate-pulse">
                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg>
                            صوت نشط
                          </span>
                        )}
                     </div>
-                    <span className="text-slate-600 text-[9px] font-black uppercase tracking-widest">إطار المشهد</span>
+                    <span className="text-slate-600 text-[8px] sm:text-[9px] font-black uppercase tracking-widest">إطار المشهد</span>
                   </div>
                   <div className="relative h-2 flex items-center">
                     <div className="absolute inset-0 h-1 bg-white/5 rounded-full overflow-hidden">
@@ -5276,14 +5370,17 @@ if (!this.JSON) { this.JSON = {}; }
         </div>
 
         <div className="xl:col-span-5 flex flex-col gap-6 h-auto xl:h-[800px]">
-          <div className="flex bg-slate-950/80 p-1 rounded-3xl border border-white/5">
-              <button onClick={() => setActiveSideTab('layers')} className={`flex-1 py-3 rounded-2xl text-[9px] font-black uppercase transition-all ${activeSideTab === 'layers' ? 'bg-sky-500 text-white shadow-glow-sky' : 'text-slate-500'}`}>الطبقات</button>
-              <button onClick={() => setActiveSideTab('transforms')} className={`flex-1 py-3 rounded-2xl text-[9px] font-black uppercase transition-all ${activeSideTab === 'transforms' ? 'bg-sky-500 text-white shadow-glow-sky' : 'text-slate-500'}`}>التحويلات</button>
-              <button onClick={() => setActiveSideTab('bg')} className={`flex-1 py-3 rounded-2xl text-[9px] font-black uppercase transition-all ${activeSideTab === 'bg' ? 'bg-sky-500 text-white shadow-glow-sky' : 'text-slate-500'}`}>الخلفية</button>
-              <button onClick={() => setActiveSideTab('optimize')} className={`flex-1 py-3 rounded-2xl text-[9px] font-black uppercase transition-all ${activeSideTab === 'optimize' ? 'bg-emerald-500 text-white shadow-glow-emerald' : 'text-slate-500'}`}>ضغط الحجم</button>
+          <div className="flex bg-slate-950/80 p-1 rounded-2xl sm:rounded-3xl border border-white/5 overflow-x-auto custom-scrollbar no-scrollbar">
+              <button onClick={() => setActiveSideTab('layers')} className={`flex-shrink-0 px-4 py-3 rounded-xl sm:rounded-2xl text-[8px] sm:text-[9px] font-black uppercase transition-all ${activeSideTab === 'layers' ? 'bg-sky-500 text-white shadow-glow-sky' : 'text-slate-500'}`}>الطبقات</button>
+              <button onClick={() => setActiveSideTab('transforms')} className={`flex-shrink-0 px-4 py-3 rounded-xl sm:rounded-2xl text-[8px] sm:text-[9px] font-black uppercase transition-all ${activeSideTab === 'transforms' ? 'bg-sky-500 text-white shadow-glow-sky' : 'text-slate-500'}`}>التحويلات</button>
+              <button onClick={() => setActiveSideTab('bg')} className={`flex-shrink-0 px-4 py-3 rounded-xl sm:rounded-2xl text-[8px] sm:text-[9px] font-black uppercase transition-all ${activeSideTab === 'bg' ? 'bg-sky-500 text-white shadow-glow-sky' : 'text-slate-500'}`}>الخلفية</button>
+              <button onClick={() => setActiveSideTab('optimize')} className={`flex-shrink-0 px-4 py-3 rounded-xl sm:rounded-2xl text-[8px] sm:text-[9px] font-black uppercase transition-all ${activeSideTab === 'optimize' ? 'bg-emerald-500 text-white shadow-glow-emerald' : 'text-slate-500'}`}>ضغط الحجم</button>
+              {currentUser?.role === 'admin' && (
+                <button onClick={() => setActiveSideTab('settings')} className={`flex-shrink-0 px-4 py-3 rounded-xl sm:rounded-2xl text-[8px] sm:text-[9px] font-black uppercase transition-all ${activeSideTab === 'settings' ? 'bg-purple-500 text-white shadow-glow-purple' : 'text-slate-500'}`}>الإعدادات</button>
+              )}
           </div>
 
-          <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-950/80 rounded-[3rem] p-6 border border-white/5 shadow-3xl">
+          <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-950/80 rounded-2xl sm:rounded-[3rem] p-4 sm:p-6 border border-white/5 shadow-3xl">
               {activeSideTab === 'layers' && (
                 <div className="space-y-6 animate-in fade-in duration-300">
                     <div className="flex justify-between items-center mb-6">
@@ -5379,6 +5476,45 @@ if (!this.JSON) { this.JSON = {}; }
                                 <span className="mt-2 text-[8px] text-slate-500 font-black block text-center uppercase truncate">{key}</span>
                             </div>
                         ))}
+                    </div>
+                </div>
+              )}
+
+              {activeSideTab === 'settings' && currentUser?.role === 'admin' && (
+                <div className="space-y-8 animate-in slide-in-from-right-4 duration-300">
+                    <div className="space-y-6">
+                        <h4 className="text-white font-black text-xs uppercase tracking-widest text-purple-400">إدارة صيغ التصدير (Control Panel)</h4>
+                        <p className="text-[10px] text-slate-400 font-bold leading-relaxed">
+                            تحكم في الصيغ التي تظهر للمستخدم في قائمة التصدير. الصيغ المحددة هنا سيتم إخفاؤها.
+                        </p>
+                        
+                        <div className="grid grid-cols-1 gap-3">
+                            {availableFormats.map(format => (
+                                <div 
+                                    key={format} 
+                                    onClick={() => {
+                                        setHiddenFormats(prev => 
+                                            prev.includes(format) 
+                                                ? prev.filter(f => f !== format) 
+                                                : [...prev, format]
+                                        );
+                                    }}
+                                    className={`flex items-center justify-between p-4 rounded-2xl border transition-all cursor-pointer ${hiddenFormats.includes(format) ? 'bg-red-500/10 border-red-500/30' : 'bg-white/5 border-white/10 hover:bg-white/10'}`}
+                                >
+                                    <div className="flex items-center gap-3">
+                                        <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center transition-all ${hiddenFormats.includes(format) ? 'border-red-500 bg-red-500' : 'border-slate-600'}`}>
+                                            {hiddenFormats.includes(format) && (
+                                                <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={4} d="M5 13l4 4L19 7" /></svg>
+                                            )}
+                                        </div>
+                                        <span className={`text-xs font-black uppercase ${hiddenFormats.includes(format) ? 'text-red-400' : 'text-white'}`}>{format}</span>
+                                    </div>
+                                    <span className={`text-[9px] font-bold uppercase ${hiddenFormats.includes(format) ? 'text-red-500/70' : 'text-slate-500'}`}>
+                                        {hiddenFormats.includes(format) ? 'مخفي' : 'ظاهر'}
+                                    </span>
+                                </div>
+                            ))}
+                        </div>
                     </div>
                 </div>
               )}
@@ -5758,6 +5894,23 @@ if (!this.JSON) { this.JSON = {}; }
                                     <div className="flex justify-between items-center">
                                         <span className="text-slate-500 text-[10px] font-black uppercase">{t('frames')}</span>
                                         <span className="text-sky-400 font-mono font-bold">{metadata.frames} Frame</span>
+                                    </div>
+                                    <div className="flex justify-between items-center pt-2 border-t border-white/5">
+                                        <span className="text-slate-500 text-[10px] font-black uppercase">صيغة التصدير</span>
+                                        <div className="flex bg-black/50 rounded-lg p-1 border border-white/10">
+                                            <button 
+                                                onClick={() => setRecordingFormat('mp4')}
+                                                className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all ${recordingFormat === 'mp4' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/20' : 'text-slate-500 hover:text-white'}`}
+                                            >
+                                                MP4
+                                            </button>
+                                            <button 
+                                                onClick={() => setRecordingFormat('webm')}
+                                                className={`px-3 py-1 rounded-md text-[10px] font-bold transition-all ${recordingFormat === 'webm' ? 'bg-sky-500 text-white shadow-lg shadow-sky-500/20' : 'text-slate-500 hover:text-white'}`}
+                                            >
+                                                WebM
+                                            </button>
+                                        </div>
                                     </div>
                                 </div>
 
@@ -6151,6 +6304,30 @@ class _MyAppState extends State<MyApp> {
                                     <span className="text-purple-500 font-bold text-xs ml-1">FPS</span>
                                 </div>
                             </div>
+
+                            {/* Duration (Seconds) */}
+                            <div className="bg-white/5 border border-white/5 rounded-2xl p-4 flex items-center justify-between hover:bg-white/[0.07] transition-all group">
+                                <div className="flex flex-col gap-1">
+                                    <span className="text-[10px] text-slate-400 font-bold uppercase tracking-wider group-hover:text-sky-400 transition-colors">مدة العرض (ثواني)</span>
+                                    <span className="text-[8px] text-slate-600">تعديل المدة الإجمالية</span>
+                                </div>
+                                <div className="flex items-center bg-black/50 rounded-xl border border-white/10 px-4 py-2 group-hover:border-sky-500/30 transition-all">
+                                    <input 
+                                        type="number" 
+                                        step="0.1"
+                                        value={((metadata.frames || 0) / (metadata.fps || 30)).toFixed(2)}
+                                        onChange={(e) => {
+                                            const duration = parseFloat(e.target.value);
+                                            if (duration > 0 && metadata.frames) {
+                                                const newFps = metadata.frames / duration;
+                                                setMetadata({...metadata, fps: Math.min(120, Math.max(1, newFps))});
+                                            }
+                                        }}
+                                        className="w-16 bg-transparent text-center text-white font-mono font-bold text-lg outline-none"
+                                    />
+                                    <span className="text-sky-500 font-bold text-xs ml-1">SEC</span>
+                                </div>
+                            </div>
                         </div>
 
                         <button 
@@ -6192,32 +6369,53 @@ class _MyAppState extends State<MyApp> {
                         </div>
                     </div>
 
-              {/* VAP 1.0.5 Special Button */}
+              {/* VAP 1.0.5 Special Button - Only visible if allowed */}
               {displayedFormats.includes('VAP 1.0.5') && (
                   <button 
                     onClick={() => handleVAP105Export(false)}
                     className="w-full py-4 mb-4 text-[11px] font-black rounded-xl shadow-glow-purple active:scale-95 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] bg-purple-600 hover:bg-purple-500 text-white"
                  >
-                    🚀 تصدير VAP 1.0.5
+                    🚀 تصدير VAP 1.0.5 (خاص)
                  </button>
               )}
-
-              {/* SVGA 2.0 EX Special Button */}
-              {displayedFormats.includes('SVGA 2.0 EX') && (
-                  <button 
-                    onClick={() => handleMainExport('SVGA 2.0 EX')}
-                    className="w-full py-4 mb-4 text-[11px] font-black rounded-xl shadow-glow-red active:scale-95 flex items-center justify-center gap-2 transition-all hover:scale-[1.02] bg-red-600 hover:bg-red-500 text-white"
-                 >
-                    🚀 تصدير SVGA 2.0 EX
-                 </button>
-              )}
-
              <div className="flex flex-wrap gap-2">
-                {displayedFormats.filter(f => f !== 'VAP 1.0.5' && f !== 'SVGA 2.0 EX').map(f => (
-                  <button key={f} onClick={() => setSelectedFormat(f)} className={`flex-1 py-3 px-2 rounded-xl text-[9px] font-black border transition-all whitespace-nowrap ${selectedFormat === f ? 'bg-sky-500 text-white border-sky-400' : 'bg-slate-950/40 text-slate-300'}`}>{f}</button>
-                ))}
+                {displayedFormats.filter(f => f !== 'VAP 1.0.5').map(f => {
+                  const isSvga2 = f === 'SVGA 2.0';
+                  const isLocked = isSvga2 && !currentUser?.hasSvgaExAccess && currentUser?.role !== 'admin';
+                  return (
+                    <button 
+                      key={f} 
+                      onClick={() => {
+                        if (isLocked) {
+                          alert("عذراً، هذه الميزة مغلقة لحسابك. يرجى التواصل مع الإدارة لتفعيلها.");
+                          return;
+                        }
+                        setSelectedFormat(f);
+                      }} 
+                      className={`flex-1 py-3 px-2 rounded-xl text-[9px] font-black border transition-all whitespace-nowrap relative ${
+                        selectedFormat === f 
+                          ? 'bg-sky-500 text-white border-sky-400 shadow-glow-sky' 
+                          : 'bg-slate-950/40 text-slate-300 border-white/5 hover:bg-white/5'
+                      } ${isLocked ? 'opacity-70 grayscale-[0.5]' : ''}`}
+                    >
+                      <div className="flex items-center justify-center gap-1">
+                        {isLocked && <Lock className="w-2.5 h-2.5 text-amber-500" />}
+                        {f}
+                      </div>
+                    </button>
+                  );
+                })}
              </div>
-             <button onClick={handleMainExport} className="w-full py-5 bg-sky-500 hover:bg-sky-400 text-white text-[11px] font-black rounded-[2rem] shadow-glow-sky active:scale-95">بدء التصدير الاحترافي</button>
+             <button 
+              onClick={handleMainExport} 
+              className={`w-full py-5 text-white text-[11px] font-black rounded-[2rem] active:scale-95 transition-all ${
+                mode === 'ex' 
+                  ? 'bg-[#ff0000] hover:bg-red-600 shadow-glow-red' 
+                  : 'bg-sky-500 hover:bg-sky-400 shadow-glow-sky'
+              }`}
+            >
+              بدء التصدير الاحترافي
+            </button>
           </div>
         </div>
       </div>

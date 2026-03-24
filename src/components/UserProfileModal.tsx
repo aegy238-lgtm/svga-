@@ -22,11 +22,6 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ currentUser,
     setMessage(null);
 
     try {
-      if (!db) {
-        setMessage({ type: 'error', text: 'قاعدة البيانات غير متصلة' });
-        setLoading(false);
-        return;
-      }
       // 1. Find the key
       const q = query(collection(db, 'licenseKeys'), where('key', '==', keyInput.trim()));
       const snapshot = await getDocs(q);

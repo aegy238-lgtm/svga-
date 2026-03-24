@@ -20,12 +20,7 @@ export const logActivity = async (
       timestamp: Timestamp.now(),
       ...(safeExportFormat ? { exportFormat: safeExportFormat } : {})
     };
-    
-    if (db) {
-      await addDoc(collection(db, 'activityLogs'), log);
-    } else {
-      console.log("Activity logged locally:", log);
-    }
+    await addDoc(collection(db, 'activityLogs'), log);
   } catch (error) {
     console.error("Failed to log activity:", error);
   }

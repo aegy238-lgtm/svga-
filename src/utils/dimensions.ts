@@ -6,18 +6,10 @@ export interface Dimensions {
 
 /**
  * Calculates safe dimensions for video encoding (must be even numbers).
- * Also ensures the total pixel count doesn't exceed AVC Level 5.1 limits (9,437,184 pixels).
  */
-export const calculateSafeDimensions = (width: number, height: number, maxPixels: number = 9437184): Dimensions => {
-  let safeWidth = Math.floor(width / 2) * 2;
-  let safeHeight = Math.floor(height / 2) * 2;
-  
-  // Cap resolution if it exceeds maxPixels
-  if (safeWidth * safeHeight > maxPixels) {
-    const ratio = Math.sqrt(maxPixels / (safeWidth * safeHeight));
-    safeWidth = Math.floor((safeWidth * ratio) / 2) * 2;
-    safeHeight = Math.floor((safeHeight * ratio) / 2) * 2;
-  }
+export const calculateSafeDimensions = (width: number, height: number): Dimensions => {
+  const safeWidth = Math.floor(width / 2) * 2;
+  const safeHeight = Math.floor(height / 2) * 2;
   
   return {
     width: isNaN(safeWidth) || safeWidth <= 0 ? 1334 : safeWidth,

@@ -11,17 +11,10 @@ import {
   Search,
   ChevronLeft,
   Plus,
-  Pencil,
-  PenTool,
-  Trash2,
-  ExternalLink,
-  Clock
+  PenTool
 } from 'lucide-react';
 import pako from 'pako';
 import { parse } from 'protobufjs';
-import gifshot from 'gifshot';
-import * as mp4Muxer from 'mp4-muxer';
-import * as webmMuxer from 'webm-muxer';
 import { svgaSchema } from '../svga-proto';
 import { SVGAFileInfo, PlayerStatus } from '../types';
 
@@ -29,15 +22,6 @@ interface SVGAViewerProps {
   file: SVGAFileInfo;
   onClear: () => void;
   originalFile?: File; 
-}
-
-interface ConvertedFile {
-  id: string;
-  name: string;
-  format: 'mp4' | 'gif' | 'webp' | 'svga' | 'zip' | 'ae';
-  url: string;
-  timestamp: number;
-  size?: string;
 }
 
 export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalFile }) => {
@@ -56,25 +40,10 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
   const [exportStatus, setExportStatus] = useState('');
   const [hiddenAssets, setHiddenAssets] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
-  const [isCreateMenuOpen, setIsCreateMenuOpen] = useState(false);
   const [videoSize, setVideoSize] = useState<{width: number, height: number} | null>(null);
   const [audioFiles, setAudioFiles] = useState<{id: string, name: string, data: string, type: 'builtin' | 'custom'}[]>([]);
   const [isAudioModified, setIsAudioModified] = useState(false);
-  const [isAssetsModified, setIsAssetsModified] = useState(false);
-  const [customBg, setCustomBg] = useState<string | null>(null);
-  const [watermark, setWatermark] = useState<string | null>(null);
-  const [watermarkScale, setWatermarkScale] = useState(1);
-  const [targetVideoDuration, setTargetVideoDuration] = useState(5);
-  const [showDurationModal, setShowDurationModal] = useState(false);
-  const [exportFormat, setExportFormat] = useState<'mp4' | 'gif' | 'webp'>('mp4');
-  const [replacingAssetId, setReplacingAssetId] = useState<string | null>(null);
-  const [convertedFiles, setConvertedFiles] = useState<ConvertedFile[]>([]);
-  const [previewFile, setPreviewFile] = useState<ConvertedFile | null>(null);
-  const [enableTransparentExports, setEnableTransparentExports] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const bgInputRef = useRef<HTMLInputElement>(null);
-  const watermarkInputRef = useRef<HTMLInputElement>(null);
-  const replaceInputRef = useRef<HTMLInputElement>(null);
   const howlInstancesRef = useRef<{ [id: string]: any }>({});
   const lastPlayedFrameRef = useRef(-1);
 
@@ -83,9 +52,6 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
     { label: 'Green', value: '#14532d' },
     { label: 'White', value: '#ffffff' },
     { label: 'Transparent', value: 'transparent' },
-    { label: 'Red', value: '#800000' },
-    { label: 'Blue', value: '#0000FF' },
-    { label: 'Yellow', value: '#FFFF00' },
   ];
 
   useEffect(() => {
@@ -223,18 +189,6 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
     });
   };
 
-  const addConvertedFile = (name: string, format: ConvertedFile['format'], url: string, blob?: Blob) => {
-    const newFile: ConvertedFile = {
-      id: Math.random().toString(36).substr(2, 9),
-      name,
-      format,
-      url,
-      timestamp: Date.now(),
-      size: blob ? (blob.size / 1024).toFixed(1) + ' KB' : undefined
-    };
-    setConvertedFiles(prev => [newFile, ...prev]);
-  };
-
   const exportAsZip = async () => {
     if (!playerRef.current || !videoItemRef.current || exporting) return;
     const JSZip = (window as any).JSZip;
@@ -288,14 +242,10 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
 
       setExportStatus('Compressing file and preparing download...');
       const content = await zip.generateAsync({type: "blob"});
-      const url = URL.createObjectURL(content);
       const link = document.createElement('a');
-      link.href = url;
-      const fileName = `${file.name.replace('.svga', '')}_Sequence.zip`;
-      link.download = fileName;
+      link.href = URL.createObjectURL(content);
+      link.download = `${file.name.replace('.svga', '')}_Sequence.zip`;
       link.click();
-
-      addConvertedFile(fileName, 'zip', url, content);
 
       document.body.removeChild(exportContainer);
       exportPlayer.clear();
@@ -481,15 +431,11 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
       setExportProgress(80);
       setExportStatus('Compressing file and preparing download...');
       const content = await zip.generateAsync({type: "blob"});
-      const url = URL.createObjectURL(content);
       const link = document.createElement('a');
-      link.href = url;
-      const fileName = `${file.name.replace('.svga', '')}_AE_Project.zip`;
-      link.download = fileName;
+      link.href = URL.createObjectURL(content);
+      link.download = `${file.name.replace('.svga', '')}_AE_Project.zip`;
       link.click();
       
-      addConvertedFile(fileName, 'ae', url, content);
-
       setExporting(false);
       setExportProgress(100);
     } catch (err) {
@@ -500,7 +446,7 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
   };
 
   const downloadModifiedSVGA = async () => {
-    if (hiddenAssets.size === 0 && !isAudioModified && !isAssetsModified) {
+    if (hiddenAssets.size === 0 && !isAudioModified) {
       const a = document.createElement('a');
       a.href = file.url;
       a.download = file.name;
@@ -543,40 +489,20 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
         const zip = await JSZip.loadAsync(buffer);
         setExportProgress(60);
 
-        // Apply hidden assets
         hiddenAssets.forEach(assetId => {
           const possibleNames = [assetId, `${assetId}.png`, `${assetId}.jpg`, `${assetId}.jpeg`];
+          let found = false;
           for (const name of possibleNames) {
             if (zip.file(name)) {
               zip.file(name, transparentPngBytes);
+              found = true;
             }
+          }
+          if (!found) {
+            zip.file(assetId, transparentPngBytes);
+            zip.file(`${assetId}.png`, transparentPngBytes);
           }
         });
-
-        // Apply replaced assets
-        for (const asset of assets) {
-          if (asset.data.startsWith('data:image')) {
-            const base64Data = asset.data.split(',')[1];
-            const binaryString = window.atob(base64Data);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-              bytes[i] = binaryString.charCodeAt(i);
-            }
-            
-            const possibleNames = [asset.id, `${asset.id}.png`, `${asset.id}.jpg`, `${asset.id}.jpeg`];
-            let found = false;
-            for (const name of possibleNames) {
-              if (zip.file(name)) {
-                zip.file(name, bytes);
-                found = true;
-              }
-            }
-            if (!found) {
-              zip.file(`${asset.id}.png`, bytes);
-            }
-          }
-        }
 
         const customAudios = audioFiles.filter(a => a.type === 'custom');
         if (customAudios.length > 0) {
@@ -603,26 +529,11 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
         setExportStatus('Applying modifications...');
 
         if (message.images) {
-          // Apply hidden assets
           hiddenAssets.forEach(assetId => {
             if (message.images[assetId]) {
               message.images[assetId] = transparentPngBytes;
             }
           });
-
-          // Apply replaced assets
-          for (const asset of assets) {
-            if (asset.data.startsWith('data:image')) {
-              const base64Data = asset.data.split(',')[1];
-              const binaryString = window.atob(base64Data);
-              const len = binaryString.length;
-              const bytes = new Uint8Array(len);
-              for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-              }
-              message.images[asset.id] = bytes;
-            }
-          }
         }
 
         // Handle audio modifications
@@ -679,11 +590,9 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
       const url = URL.createObjectURL(finalBlob);
       const a = document.createElement('a');
       a.href = url;
-      const fileName = `${file.name.replace('.svga', '')}_modified.svga`;
-      a.download = fileName;
+      a.download = `${file.name.replace('.svga', '')}_modified.svga`;
       a.click();
-      
-      addConvertedFile(fileName, 'svga', url, finalBlob);
+      URL.revokeObjectURL(url);
 
       setExportProgress(100);
       setExporting(false);
@@ -810,7 +719,7 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
       }
     } else if (status === PlayerStatus.PAUSED) {
       (Object.values(howlInstancesRef.current) as any[]).forEach(sound => {
-        sound.stop();
+        sound.pause();
       });
       lastPlayedFrameRef.current = -1;
     }
@@ -825,624 +734,8 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
   const version = videoItemRef.current?.version || '2.0';
   const fileSize = originalFile ? (originalFile.size / 1024).toFixed(2) + ' KB' : 'Unknown';
 
-  const handleReplaceImage = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file || !replacingAssetId || !playerRef.current) return;
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const data = e.target?.result as string;
-      
-      // Update the asset in our state
-      setAssets(prev => prev.map(a => a.id === replacingAssetId ? { ...a, data } : a));
-      setIsAssetsModified(true);
-      
-      // Update the SVGA player
-      playerRef.current.setImage(data, replacingAssetId);
-      
-      setReplacingAssetId(null);
-    };
-    reader.readAsDataURL(file);
-    if (replaceInputRef.current) replaceInputRef.current.value = '';
-  };
-
-  const handleBgUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => setCustomBg(e.target?.result as string);
-    reader.readAsDataURL(file);
-  };
-
-  const handleWatermarkUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (e) => setWatermark(e.target?.result as string);
-    reader.readAsDataURL(file);
-  };
-
-  const downloadAsset = (asset: {id: string, data: string}) => {
-    const link = document.createElement('a');
-    link.href = asset.data;
-    link.download = `${asset.id}.png`;
-    link.click();
-  };
-
-  const exportAsVideo = async (formatOverride?: 'mp4' | 'gif' | 'webp', forceTransparent?: boolean) => {
-    const currentFormat = formatOverride || exportFormat;
-    const isTransparent = forceTransparent || (bgColor === 'transparent');
-    if (!playerRef.current || !videoItemRef.current || exporting) return;
-    
-    try {
-      setExporting(true);
-      setExportProgress(0);
-      setExportStatus(`Initializing ${currentFormat.toUpperCase()}${isTransparent ? ' (Transparent)' : ''} engine...`);
-      
-      playerRef.current.pauseAnimation();
-      setStatus(PlayerStatus.PAUSED);
-
-      const { width, height } = videoItemRef.current.videoSize;
-      const fps = videoItemRef.current.FPS || 30;
-      const totalFramesInSvga = videoItemRef.current.frames;
-      const totalFramesToRecord = Math.ceil(targetVideoDuration * fps);
-      
-      const captureCanvas = document.createElement('canvas');
-      captureCanvas.width = width;
-      captureCanvas.height = height;
-      const ctx = captureCanvas.getContext('2d', { alpha: true });
-      if (!ctx) throw new Error("Could not create canvas context");
-
-      // Prepare background image if exists
-      let bgImg: HTMLImageElement | null = null;
-      if (customBg && !isTransparent) {
-        bgImg = new Image();
-        bgImg.src = customBg;
-        await new Promise((resolve) => { bgImg!.onload = resolve; bgImg!.onerror = resolve; });
-      }
-
-      // Prepare watermark image if exists
-      let watermarkImg: HTMLImageElement | null = null;
-      if (watermark) {
-        watermarkImg = new Image();
-        watermarkImg.src = watermark;
-        await new Promise((resolve) => { 
-          watermarkImg!.onload = resolve; 
-          watermarkImg!.onerror = () => { watermarkImg = null; resolve(null); }; 
-        });
-      }
-
-      // Prepare Audio if exists
-      let audioBuffer: AudioBuffer | null = null;
-      const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
-      
-      if (audioFiles.length > 0) {
-        setExportStatus('Preparing audio tracks...');
-        try {
-          // Create an offline context for the full duration
-          const offlineCtx = new OfflineAudioContext(2, Math.ceil(targetVideoDuration * audioCtx.sampleRate), audioCtx.sampleRate);
-          
-          for (const audio of audioFiles) {
-            let data: ArrayBuffer | null = null;
-            if (audio.type === 'custom') {
-              const res = await fetch(audio.data);
-              data = await res.arrayBuffer();
-            } else if (videoItemRef.current.images[audio.id]) {
-              const imgData = videoItemRef.current.images[audio.id];
-              if (imgData instanceof Uint8Array) {
-                data = imgData.buffer;
-              } else if (typeof imgData === 'string') {
-                const base64 = imgData.split(',')[1] || imgData;
-                const binary = window.atob(base64);
-                const bytes = new Uint8Array(binary.length);
-                for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
-                data = bytes.buffer;
-              }
-            }
-
-            if (data) {
-              const buffer = await offlineCtx.decodeAudioData(data);
-              const source = offlineCtx.createBufferSource();
-              source.buffer = buffer;
-              source.connect(offlineCtx.destination);
-              
-              // If it's a loop, we might need to repeat it
-              if (isLoop && buffer.duration < targetVideoDuration) {
-                source.loop = true;
-                source.loopEnd = buffer.duration;
-              }
-              source.start(0);
-            }
-          }
-          
-          audioBuffer = await offlineCtx.startRendering();
-        } catch (err) {
-          console.error("Audio preparation failed:", err);
-        }
-      }
-
-      const frames: string[] = [];
-      const chunks: Blob[] = [];
-      let recorder: MediaRecorder | null = null;
-      let muxer: any = null;
-      let encoder: any = null;
-      let audioEncoder: any = null;
-      let useVideoEncoder = false;
-
-      if ((currentFormat === 'mp4' || currentFormat === 'webp') && typeof VideoEncoder !== 'undefined') {
-        const config: any = {
-          codec: currentFormat === 'mp4' ? 'avc1.4D4033' : 'vp09.00.10.08',
-          width: width,
-          height: height,
-          bitrate: 15000000,
-          framerate: fps,
-        };
-        
-        if (currentFormat === 'webp' && isTransparent) {
-          config.alpha = 'keep';
-        }
-
-        try {
-          const support = await VideoEncoder.isConfigSupported(config);
-          if (support.supported) {
-            useVideoEncoder = true;
-            setExportStatus('Using High-Performance Hardware Encoder...');
-          } else {
-            console.warn('VideoEncoder config not supported, falling back to MediaRecorder');
-          }
-        } catch (e) {
-          console.error('VideoEncoder support check failed:', e);
-        }
-        
-        if (useVideoEncoder) {
-          if (currentFormat === 'mp4') {
-            const muxerConfig: any = {
-              target: new mp4Muxer.ArrayBufferTarget(),
-              video: {
-                codec: 'avc',
-                width: width,
-                height: height
-              },
-              fastStart: 'in-memory'
-            };
-
-            if (audioBuffer) {
-              muxerConfig.audio = {
-                codec: 'aac',
-                numberOfChannels: audioBuffer.numberOfChannels,
-                sampleRate: audioBuffer.sampleRate
-              };
-            }
-
-            muxer = new mp4Muxer.Muxer(muxerConfig);
-
-            encoder = new VideoEncoder({
-              output: (chunk, metadata) => muxer.addVideoChunk(chunk, metadata),
-              error: (e) => {
-                console.error('VideoEncoder error:', e);
-                setExportStatus('Encoder Error. Falling back to standard recording...');
-                // Note: If this happens mid-stream, we might have issues
-              }
-            });
-
-            encoder.configure({
-              codec: 'avc1.4D4033', // Level 5.1
-              width: width,
-              height: height,
-              bitrate: 15000000,
-              framerate: fps
-            });
-
-            if (audioBuffer && typeof AudioEncoder !== 'undefined') {
-              audioEncoder = new AudioEncoder({
-                output: (chunk, metadata) => muxer.addAudioChunk(chunk, metadata),
-                error: (e) => console.error('AudioEncoder error:', e)
-              });
-
-              audioEncoder.configure({
-                codec: 'mp4a.40.2', // AAC-LC
-                numberOfChannels: audioBuffer.numberOfChannels,
-                sampleRate: audioBuffer.sampleRate,
-                bitrate: 128000
-              });
-
-              // Encode audio buffer
-              const samplesPerChunk = 1024;
-              for (let i = 0; i < audioBuffer.length; i += samplesPerChunk) {
-                const length = Math.min(samplesPerChunk, audioBuffer.length - i);
-                const data = new Float32Array(length * audioBuffer.numberOfChannels);
-                for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
-                  const channelData = audioBuffer.getChannelData(channel);
-                  for (let j = 0; j < length; j++) {
-                    data[j * audioBuffer.numberOfChannels + channel] = channelData[i + j];
-                  }
-                }
-
-                const audioData = new AudioData({
-                  format: 'f32',
-                  sampleRate: audioBuffer.sampleRate,
-                  numberOfFrames: length,
-                  numberOfChannels: audioBuffer.numberOfChannels,
-                  timestamp: (i * 1000000) / audioBuffer.sampleRate,
-                  data: data
-                });
-                audioEncoder.encode(audioData);
-                audioData.close();
-              }
-              await audioEncoder.flush();
-            }
-          } else if (currentFormat === 'webp') {
-            muxer = new webmMuxer.Muxer({
-              target: new webmMuxer.ArrayBufferTarget(),
-              video: {
-                codec: 'V_VP9',
-                width: width,
-                height: height,
-                alpha: isTransparent
-              }
-            });
-
-            encoder = new VideoEncoder({
-              output: (chunk, metadata) => muxer.addVideoChunk(chunk, metadata),
-              error: (e) => {
-                console.error('VideoEncoder error:', e);
-                setExportStatus('Encoder Error. Falling back to standard recording...');
-              }
-            });
-
-            encoder.configure({
-              codec: 'vp09.00.10.08',
-              width: width,
-              height: height,
-              bitrate: 15000000,
-              framerate: fps,
-              alpha: isTransparent ? 'keep' : 'discard'
-            });
-          }
-        }
-      }
-
-      if ((currentFormat === 'mp4' || currentFormat === 'webp') && !useVideoEncoder) {
-        let mimeType = 'video/webm;codecs=vp9';
-        
-        if (currentFormat === 'mp4') {
-          const types = [
-            'video/mp4;codecs=avc1',
-            'video/mp4',
-            'video/webm;codecs=h264',
-            'video/webm;codecs=vp9',
-            'video/webm;codecs=vp8',
-            'video/webm'
-          ];
-          mimeType = types.find(t => MediaRecorder.isTypeSupported(t)) || 'video/webm';
-        } else {
-          mimeType = MediaRecorder.isTypeSupported('video/webm;codecs=vp9') ? 'video/webm;codecs=vp9' : 'video/webm';
-        }
-
-        // Combine canvas stream and audio stream if exists
-        const canvasStream = captureCanvas.captureStream(0);
-        let combinedStream = canvasStream;
-
-        recorder = new MediaRecorder(combinedStream, {
-          mimeType: mimeType,
-          videoBitsPerSecond: 15000000
-        });
-
-        if (audioBuffer) {
-          const audioDest = audioCtx.createMediaStreamDestination();
-          const bufferSource = audioCtx.createBufferSource();
-          bufferSource.buffer = audioBuffer;
-          bufferSource.connect(audioDest);
-          
-          combinedStream = new MediaStream([
-            ...canvasStream.getVideoTracks(),
-            ...audioDest.stream.getAudioTracks()
-          ]);
-          
-          // Re-create recorder with the combined stream if audio was added
-          recorder = new MediaRecorder(combinedStream, {
-            mimeType: mimeType,
-            videoBitsPerSecond: 15000000
-          });
-          
-          (recorder as any)._bufferSource = bufferSource;
-        }
-        
-        recorder.ondataavailable = (e) => {
-          if (e.data.size > 0) chunks.push(e.data);
-        };
-
-        recorder.onstop = () => {
-          const blob = new Blob(chunks, { type: recorder?.mimeType || 'video/mp4' });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          const ext = currentFormat === 'mp4' ? (recorder?.mimeType.includes('mp4') ? 'mp4' : 'webm') : (currentFormat === 'webp' ? 'webp' : 'webm');
-          const fileName = `${file.name.replace('.svga', '')}_export${isTransparent ? '_transparent' : ''}.${ext}`;
-          a.download = fileName;
-          a.click();
-          
-          addConvertedFile(fileName, currentFormat, url, blob);
-          
-          setExporting(false);
-          playerRef.current.startAnimation();
-          setStatus(PlayerStatus.PLAYING);
-        };
-
-        recorder.start();
-        if ((recorder as any)._bufferSource) {
-          (recorder as any)._bufferSource.start(0);
-        }
-      }
-
-      const SVGA = (window as any).SVGA;
-      const exportContainer = document.createElement('div');
-      exportContainer.style.position = 'fixed';
-      exportContainer.style.left = '-9999px';
-      exportContainer.style.top = '-9999px';
-      exportContainer.style.width = `${width}px`;
-      exportContainer.style.height = `${height}px`;
-      document.body.appendChild(exportContainer);
-
-      const exportPlayer = new SVGA.Player(exportContainer);
-      exportPlayer.setVideoItem(videoItemRef.current);
-      
-      hiddenAssets.forEach(assetId => {
-        exportPlayer.setImage('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', assetId);
-      });
-      assets.forEach(asset => {
-        exportPlayer.setImage(asset.data, asset.id);
-      });
-
-      await new Promise(r => setTimeout(r, 500));
-
-      for (let i = 0; i < totalFramesToRecord; i++) {
-        const svgaFrame = i % totalFramesInSvga;
-        setExportStatus(`Rendering frame ${i + 1} of ${totalFramesToRecord}...`);
-        
-        exportPlayer.stepToFrame(svgaFrame, false);
-        await new Promise(r => setTimeout(r, 40));
-        
-        const svgaCanvas = exportContainer.querySelector('canvas');
-        
-        ctx.clearRect(0, 0, width, height);
-        ctx.imageSmoothingEnabled = !isTransparent;
-        ctx.imageSmoothingQuality = 'high';
-        
-        if (bgImg && !isTransparent) {
-          ctx.drawImage(bgImg, 0, 0, width, height);
-        } else if (isTransparent) {
-          // Keep it transparent
-          if (currentFormat === 'gif') {
-            // For GIF, we use a chroma key
-            ctx.fillStyle = '#00FF00'; // Pure green for transparency
-            ctx.fillRect(0, 0, width, height);
-          } else {
-            // For WEBP/MP4, we want a clear canvas
-            ctx.clearRect(0, 0, width, height);
-          }
-        } else if (bgColor !== 'transparent') {
-          ctx.fillStyle = bgColor;
-          ctx.fillRect(0, 0, width, height);
-        } else {
-          // Default background for non-transparent exports
-          ctx.fillStyle = '#000000';
-          ctx.fillRect(0, 0, width, height);
-        }
-
-        if (svgaCanvas) {
-          if (isTransparent && currentFormat === 'gif') {
-            // To avoid green fringe in GIF, we remove semi-transparency aggressively
-            const tempCanvas = document.createElement('canvas');
-            tempCanvas.width = width;
-            tempCanvas.height = height;
-            const tempCtx = tempCanvas.getContext('2d');
-            if (tempCtx) {
-              tempCtx.imageSmoothingEnabled = false;
-              tempCtx.drawImage(svgaCanvas, 0, 0, width, height);
-              const imageData = tempCtx.getImageData(0, 0, width, height);
-              const data = imageData.data;
-              for (let j = 0; j < data.length; j += 4) {
-                // Aggressive binary transparency: any non-opaque pixel becomes fully transparent
-                if (data[j + 3] < 255) {
-                  data[j + 3] = 0;
-                } else {
-                  data[j + 3] = 255;
-                }
-              }
-              tempCtx.putImageData(imageData, 0, 0);
-              ctx.drawImage(tempCanvas, 0, 0, width, height);
-            }
-          } else {
-            ctx.drawImage(svgaCanvas, 0, 0, width, height);
-          }
-        }
-
-        if (watermarkImg) {
-          ctx.save();
-          ctx.globalAlpha = 0.7;
-          
-          // Calculate fit size for watermark
-          const maxW = width * 0.8;
-          const maxH = height * 0.8;
-          let w = watermarkImg.width * watermarkScale;
-          let h = watermarkImg.height * watermarkScale;
-          
-          const scale = Math.min(maxW / w, maxH / h, 1);
-          w *= scale;
-          h *= scale;
-          
-          ctx.drawImage(watermarkImg, (width - w) / 2, (height - h) / 2, w, h);
-          ctx.restore();
-        }
-
-        if (currentFormat === 'gif') {
-          frames.push(captureCanvas.toDataURL('image/png'));
-        } else if (useVideoEncoder) {
-          const bitmap = await createImageBitmap(captureCanvas);
-          const timestamp = (i * 1000000) / fps;
-          const frame = new VideoFrame(bitmap, { timestamp });
-          encoder.encode(frame);
-          frame.close();
-        } else if (recorder) {
-          // Manually request a frame if using captureStream(0)
-          const track = recorder.stream.getVideoTracks()[0];
-          if (track && (track as any).requestFrame) {
-            (track as any).requestFrame();
-          }
-          // Small delay to ensure recorder captures the frame
-          await new Promise(r => setTimeout(r, 20));
-        }
-
-        setExportProgress(Math.round(((i + 1) / totalFramesToRecord) * 100));
-      }
-
-      if (currentFormat === 'gif') {
-        setExportStatus('Generating GIF (this may take a while)...');
-        gifshot.createGIF({
-          images: frames,
-          gifWidth: width,
-          gifHeight: height,
-          interval: 1 / fps,
-          numFrames: frames.length,
-          frameDuration: 1 / fps,
-          sampleInterval: 1,
-          numWorkers: 4,
-          transparent: isTransparent ? '#00FF00' : undefined
-        }, (obj: any) => {
-          if (!obj.error) {
-            const url = obj.image;
-            const a = document.createElement('a');
-            a.href = url;
-            const fileName = `${file.name.replace('.svga', '')}_export${isTransparent ? '_transparent' : ''}.gif`;
-            a.download = fileName;
-            a.click();
-            
-            addConvertedFile(fileName, 'gif', url);
-          }
-          setExporting(false);
-          playerRef.current.startAnimation();
-          setStatus(PlayerStatus.PLAYING);
-        });
-      } else if (useVideoEncoder) {
-        setExportStatus(`Finalizing ${currentFormat.toUpperCase()} file...`);
-        await encoder.flush();
-        muxer.finalize();
-        const { buffer } = muxer.target as mp4Muxer.ArrayBufferTarget;
-        const blob = new Blob([buffer], { type: currentFormat === 'mp4' ? 'video/mp4' : 'video/webm' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        const ext = currentFormat === 'mp4' ? 'mp4' : (currentFormat === 'webp' ? 'webp' : 'webm');
-        const fileName = `${file.name.replace('.svga', '')}_export${isTransparent ? '_transparent' : ''}.${ext}`;
-        a.download = fileName;
-        a.click();
-        
-        addConvertedFile(fileName, currentFormat, url, blob);
-        
-        setExporting(false);
-        playerRef.current.startAnimation();
-        setStatus(PlayerStatus.PLAYING);
-      } else if (recorder) {
-        recorder.stop();
-      }
-
-      document.body.removeChild(exportContainer);
-      exportPlayer.clear();
-    } catch (error) {
-      console.error("Export failed:", error);
-      alert("Export failed. Please try again.");
-      setExporting(false);
-      playerRef.current?.startAnimation();
-      setStatus(PlayerStatus.PLAYING);
-    }
-  };
-
   return (
     <div className="flex flex-col min-h-screen bg-[#0f0f0f] text-[#e5e5e5] font-sans selection:bg-blue-500/30 md:h-screen md:overflow-hidden" dir="ltr">
-      {/* Replacement Input */}
-      <input type="file" accept="image/*" className="hidden" ref={replaceInputRef} onChange={handleReplaceImage} />
-      <input type="file" accept="image/*" className="hidden" ref={bgInputRef} onChange={handleBgUpload} />
-      <input type="file" accept="image/*" className="hidden" ref={watermarkInputRef} onChange={handleWatermarkUpload} />
-      
-      {showDurationModal && (
-        <div className="fixed inset-0 z-[120] bg-black/90 backdrop-blur-md flex items-center justify-center p-6">
-          <div className="max-w-sm w-full bg-[#1a1a1a] p-8 rounded-2xl border border-[#333] shadow-2xl">
-            <h3 className="text-lg font-bold text-white mb-4 text-center">Export Settings</h3>
-            <div className="space-y-4 mb-8">
-              <div>
-                <label className="block text-[10px] text-[#a3a3a3] uppercase tracking-wider mb-2">Export Format</label>
-                <div className="grid grid-cols-1 gap-2">
-                  {(['mp4'] as const).map((f) => (
-                    <button
-                      key={f}
-                      onClick={() => setExportFormat(f)}
-                      className={`py-2 rounded-lg text-xs font-bold transition-all border ${
-                        exportFormat === f 
-                          ? 'bg-blue-600 border-blue-500 text-white' 
-                          : 'bg-[#111] border-[#333] text-[#a3a3a3] hover:border-[#444]'
-                      }`}
-                    >
-                      {f.toUpperCase()}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div>
-                <label className="block text-[10px] text-[#a3a3a3] uppercase tracking-wider mb-2">Video Duration (Seconds)</label>
-                <input 
-                  type="number" 
-                  value={targetVideoDuration} 
-                  onChange={(e) => setTargetVideoDuration(Math.max(1, parseInt(e.target.value) || 1))}
-                  className="w-full bg-[#111] border border-[#333] rounded-lg px-4 py-2.5 text-sm text-white focus:border-blue-500 outline-none transition-colors"
-                />
-              </div>
-              <p className="text-[10px] text-[#a3a3a3] leading-relaxed">
-                The animation will loop automatically if the specified duration is longer than the original animation.
-              </p>
-            </div>
-            <div className="flex flex-col gap-3">
-              <button 
-                onClick={() => {
-                  setShowDurationModal(false);
-                  exportAsVideo();
-                }}
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded-lg text-sm font-bold transition-all"
-              >
-                Start Export
-              </button>
-              <button 
-                onClick={() => setShowDurationModal(false)}
-                className="w-full bg-[#262626] hover:bg-[#333] text-[#a3a3a3] py-2.5 rounded-lg text-sm font-medium transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-      {replacingAssetId && (
-        <div className="fixed inset-0 z-[110] bg-black/90 backdrop-blur-md flex items-center justify-center p-6">
-          <div className="max-w-sm w-full bg-[#1a1a1a] p-8 rounded-2xl border border-[#333] shadow-2xl text-center">
-            <h3 className="text-lg font-bold text-white mb-2">Replace Asset</h3>
-            <p className="text-[#a3a3a3] text-xs mb-6">The new image will automatically take the dimensions of the original layer "{replacingAssetId}".</p>
-            <div className="flex flex-col gap-3">
-              <button 
-                onClick={() => replaceInputRef.current?.click()}
-                className="w-full bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded-lg text-sm font-medium transition-colors"
-              >
-                Select New Image
-              </button>
-              <button 
-                onClick={() => setReplacingAssetId(null)}
-                className="w-full bg-[#262626] hover:bg-[#333] text-[#a3a3a3] py-2.5 rounded-lg text-sm font-medium transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
       {exporting && (
         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-xl flex items-center justify-center p-6 text-center">
           <div className="max-w-md w-full bg-[#1a1a1a] p-10 rounded-2xl border border-[#333] shadow-2xl">
@@ -1482,8 +775,13 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
           </div>
           <span className="font-bold text-white text-sm">MotionTools</span>
         </div>
+        <div className="hidden md:flex items-center gap-6 text-xs font-medium text-[#a3a3a3]">
+          <span className="text-white">Features</span>
+          <span className="hover:text-white cursor-pointer transition-colors">Motion Workspace</span>
+          <span className="hover:text-white cursor-pointer transition-colors">Image Compression</span>
+        </div>
         <div className="flex items-center gap-4">
-          <button onClick={onClear} className="flex items-center gap-1 text-xs text-[#a3a3a3] hover:text-white transition-colors bg-[#800000] px-3 py-1.5 rounded border border-[#333]">
+          <button onClick={onClear} className="flex items-center gap-1 text-xs text-[#a3a3a3] hover:text-white transition-colors bg-[#1a1a1a] px-3 py-1.5 rounded border border-[#333]">
             <ChevronLeft size={14} /> Back
           </button>
           <div className="w-7 h-7 bg-white rounded-full flex items-center justify-center text-black font-bold text-xs">
@@ -1571,45 +869,23 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
             </div>
             
             <div className="flex-1 overflow-y-auto custom-scrollbar -mx-2 px-2">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-2">
                 {filteredAssets.map(asset => (
                   <div 
                     key={asset.id} 
-                    className={`flex flex-col items-center p-3 rounded-xl border transition-all duration-200 ${hiddenAssets.has(asset.id) ? 'border-red-500/50 bg-red-500/5' : 'border-[#262626] bg-[#111] hover:border-[#444]'}`}
+                    className={`flex flex-col items-center p-2 rounded-lg border cursor-pointer transition-colors ${hiddenAssets.has(asset.id) ? 'border-red-500/50 bg-red-500/10' : 'border-[#262626] bg-[#111] hover:border-[#444]'}`}
+                    onClick={() => toggleAssetVisibility(asset.id)}
+                    title={hiddenAssets.has(asset.id) ? 'Click to show' : 'Click to hide'}
                   >
-                    <div className="w-full aspect-square flex items-center justify-center mb-3 relative bg-[#0a0a0a] rounded-lg overflow-hidden border border-[#262626]">
-                       <img src={asset.data} className="max-w-[80%] max-h-[80%] object-contain" />
-                       {hiddenAssets.has(asset.id) && <div className="absolute inset-0 bg-black/60 flex items-center justify-center"><EyeOff size={16} className="text-red-400"/></div>}
+                    <div className="w-12 h-12 flex items-center justify-center mb-2 relative">
+                       <img src={asset.data} className="max-w-full max-h-full object-contain" />
+                       {hiddenAssets.has(asset.id) && <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded"><EyeOff size={14} className="text-red-400"/></div>}
                     </div>
-                    <span className="text-[10px] text-[#a3a3a3] truncate w-full text-center mb-3 font-mono">{asset.id}</span>
-                    
-                    <div className="grid grid-cols-3 gap-1 w-full">
-                      <button 
-                        onClick={() => toggleAssetVisibility(asset.id)}
-                        className="bg-[#1a1a1a] hover:bg-[#262626] border border-[#333] rounded p-1.5 flex items-center justify-center transition-colors"
-                        title={hiddenAssets.has(asset.id) ? 'Show' : 'Hide'}
-                      >
-                        {hiddenAssets.has(asset.id) ? <Eye size={12} /> : <EyeOff size={12} />}
-                      </button>
-                      <button 
-                        onClick={() => downloadAsset(asset)}
-                        className="bg-[#1a1a1a] hover:bg-[#262626] border border-[#333] rounded p-1.5 flex items-center justify-center transition-colors"
-                        title="Download"
-                      >
-                        <Download size={12} />
-                      </button>
-                      <button 
-                        onClick={() => setReplacingAssetId(asset.id)}
-                        className="bg-[#1a1a1a] hover:bg-[#262626] border border-[#333] rounded p-1.5 flex items-center justify-center transition-colors"
-                        title="Replace"
-                      >
-                        <Pencil size={12} className="text-blue-400" />
-                      </button>
-                    </div>
+                    <span className="text-[9px] text-[#a3a3a3] truncate w-full text-center">{asset.id}</span>
                   </div>
                 ))}
                 {filteredAssets.length === 0 && (
-                   <div className="col-span-2 text-center text-[#555] text-xs py-8">No assets found</div>
+                   <div className="col-span-3 text-center text-[#555] text-xs py-4">No assets found</div>
                 )}
               </div>
             </div>
@@ -1630,25 +906,6 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
              }}
            >
               <div className="flex-1 relative flex items-center justify-center bg-black overflow-hidden">
-                  {customBg && (
-                    <img 
-                      src={customBg} 
-                      className="absolute inset-0 w-full h-full object-cover opacity-100" 
-                      style={{ zIndex: 0 }}
-                    />
-                  )}
-                  {watermark && (
-                    <div 
-                      className="absolute inset-0 flex items-center justify-center pointer-events-none"
-                      style={{ zIndex: 20 }}
-                    >
-                      <img 
-                        src={watermark} 
-                        style={{ transform: `scale(${watermarkScale})` }}
-                        className="max-w-full max-h-full opacity-70"
-                      />
-                    </div>
-                  )}
                  {status === PlayerStatus.LOADING && (
                    <div className="absolute inset-0 flex items-center justify-center z-20">
                      <div className="w-10 h-10 border-4 border-[#333] border-t-blue-500 rounded-full animate-spin"></div>
@@ -1664,19 +921,18 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
                  <style>{`
                    #svga-container canvas {
                      /* Let SVGA player handle the sizing and transform */
-                     background-color: #0000FF;
                    }
                  `}</style>
-                 <div id="svga-container" ref={containerRef} style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0, zIndex: 10 }}></div>
+                 <div id="svga-container" ref={containerRef} style={{ width: '100%', height: '100%', position: 'absolute', top: 0, left: 0 }}></div>
               </div>
               
               {/* Player Controls */}
               <div className="h-14 bg-[#1a1a1a] border-t border-[#262626] flex items-center gap-4 px-4 z-30 shrink-0">
                  <button onClick={togglePlay} className="text-white hover:text-gray-300 transition-colors">
-                   {status === PlayerStatus.PLAYING ? <Pause size={16} fill="currentColor" style={{ backgroundColor: '#0000FF' }} /> : <Play size={16} fill="currentColor" style={{ backgroundColor: '#0000FF' }} />}
+                   {status === PlayerStatus.PLAYING ? <Pause size={16} fill="currentColor" /> : <Play size={16} fill="currentColor" />}
                  </button>
                  <div 
-                   className="flex-1 h-1.5 bg-[#0000FF] rounded-full relative cursor-pointer group"
+                   className="flex-1 h-1.5 bg-[#333] rounded-full relative cursor-pointer group"
                    onClick={(e) => {
                      if (!playerRef.current || totalFrames === 0) return;
                      const rect = e.currentTarget.getBoundingClientRect();
@@ -1702,7 +958,7 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
 
         {/* Right Sidebar */}
         <aside className="w-full md:w-[320px] border-t md:border-t-0 md:border-l border-[#262626] flex flex-col bg-[#0a0a0a] shrink-0 md:overflow-y-auto p-5 custom-scrollbar">
-            {/* Animation Info */}
+           {/* Animation Info */}
            <div className="mb-8">
              <h3 className="text-xs font-bold text-[#e5e5e5] mb-3">Animation Info</h3>
              <div className="flex flex-wrap gap-1.5">
@@ -1729,60 +985,6 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
                </div>
              </div>
            </div>
-
-            {/* Background & Watermark */}
-            <div className="mb-8">
-              <h3 className="text-xs font-bold text-[#e5e5e5] mb-4">Customization</h3>
-              <div className="grid grid-cols-2 gap-2 mb-4">
-                <button 
-                  onClick={() => bgInputRef.current?.click()}
-                  className="bg-[#1a1a1a] border border-[#333] rounded-lg py-2 text-[10px] text-[#a3a3a3] flex items-center justify-center gap-2 hover:bg-[#262626] transition-colors"
-                >
-                  <Layers size={12} className="text-blue-500" />
-                  Upload Background
-                </button>
-                <button 
-                  onClick={() => watermarkInputRef.current?.click()}
-                  className="bg-[#1a1a1a] border border-[#333] rounded-lg py-2 text-[10px] text-[#a3a3a3] flex items-center justify-center gap-2 hover:bg-[#262626] transition-colors"
-                >
-                  <PenTool size={12} className="text-purple-500" />
-                  Upload Watermark
-                </button>
-              </div>
-              
-              {watermark && (
-                <div className="space-y-3 mb-6 bg-[#111] p-3 rounded-xl border border-[#262626]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-[10px] text-[#a3a3a3] font-medium uppercase tracking-wider">Watermark Scale</span>
-                    <span className="text-[10px] text-blue-400 font-mono">{watermarkScale.toFixed(1)}x</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="0.1" 
-                    max="3" 
-                    step="0.1" 
-                    value={watermarkScale} 
-                    onChange={(e) => setWatermarkScale(parseFloat(e.target.value))}
-                    className="w-full h-1 bg-[#333] rounded-full appearance-none cursor-pointer accent-blue-500"
-                  />
-                  <div className="flex gap-2">
-                    <button 
-                      onClick={() => setWatermarkScale(prev => Math.max(0.1, prev - 0.1))}
-                      className="flex-1 bg-[#1a1a1a] border border-[#333] rounded py-1 text-[10px] text-[#a3a3a3] hover:text-white transition-colors"
-                    >
-                      Shrink
-                    </button>
-                    <button 
-                      onClick={() => setWatermarkScale(prev => Math.min(3, prev + 0.1))}
-                      className="flex-1 bg-[#1a1a1a] border border-[#333] rounded py-1 text-[10px] text-[#a3a3a3] hover:text-white transition-colors"
-                    >
-                      Enlarge
-                    </button>
-                  </div>
-                </div>
-              )}
-
-            </div>
 
            {/* Animation Edit (Export Options) */}
            <div>
@@ -1817,252 +1019,21 @@ export const SVGAViewer: React.FC<SVGAViewerProps> = ({ file, onClear, originalF
                   <span className="text-xs font-medium text-[#e5e5e5]">Compression Quality</span>
                   <input type="text" defaultValue="100" className="w-32 bg-[#1a1a1a] border border-[#333] rounded px-2 py-1 text-xs text-[#e5e5e5] outline-none" />
                 </div>
-
-                <div className="flex flex-col gap-2 pt-2 border-t border-[#262626]">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-medium text-[#e5e5e5]">Video Duration (S)</span>
-                    <input 
-                      type="number" 
-                      value={targetVideoDuration} 
-                      onChange={(e) => setTargetVideoDuration(Math.max(1, parseInt(e.target.value) || 1))}
-                      className="w-16 bg-[#1a1a1a] border border-[#333] rounded px-2 py-1 text-xs text-center text-[#e5e5e5] outline-none" 
-                    />
-                  </div>
-                  <p className="text-[10px] text-[#a3a3a3]">Animation will loop if duration is longer than original.</p>
-                </div>
              </div>
 
              <div className="flex flex-col gap-2">
-               {!isCreateMenuOpen ? (
-                 <button 
-                   onClick={() => setIsCreateMenuOpen(true)}
-                   className="w-full bg-[#800000] hover:bg-[#a00000] text-white py-3 rounded-lg text-sm font-bold transition-all shadow-lg flex items-center justify-center gap-2"
-                 >
-                   <Plus size={16} /> Create
-                 </button>
-               ) : (
-                 <div className="space-y-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                   <div className="flex items-center justify-between px-1">
-                     <span className="text-[10px] font-bold text-[#a3a3a3] uppercase tracking-widest">Available Formats</span>
-                     <button 
-                       onClick={() => setIsCreateMenuOpen(false)}
-                       className="text-[#a3a3a3] hover:text-white transition-colors"
-                     >
-                       <ChevronLeft size={14} className="rotate-90" />
-                     </button>
-                   </div>
-                    <div className="grid grid-cols-1 gap-2">
-                      <button onClick={() => { setExportFormat('mp4'); setShowDurationModal(true); }} className="w-full bg-[#1a1a1a] hover:bg-[#262626] text-[#e5e5e5] py-2.5 rounded text-xs font-medium transition-colors border border-[#333] flex items-center gap-3 px-4">
-                        <div className="w-6 h-6 rounded bg-indigo-500/10 flex items-center justify-center text-indigo-500">
-                          <Video size={14} />
-                        </div>
-                        Export MP4 Video
-                      </button>
-                      <button onClick={downloadModifiedSVGA} className="w-full bg-[#1a1a1a] hover:bg-[#262626] text-[#e5e5e5] py-2.5 rounded text-xs font-medium transition-colors border border-[#333] flex items-center gap-3 px-4">
-                        <div className="w-6 h-6 rounded bg-green-500/10 flex items-center justify-center text-green-500">
-                          <Download size={14} />
-                        </div>
-                        Save Modified SVGA
-                      </button>
-                      <button onClick={exportAsZip} className="w-full bg-[#1a1a1a] hover:bg-[#262626] text-[#e5e5e5] py-2.5 rounded text-xs font-medium transition-colors border border-[#333] flex items-center gap-3 px-4">
-                        <div className="w-6 h-6 rounded bg-purple-500/10 flex items-center justify-center text-purple-500">
-                          <Layers size={14} />
-                        </div>
-                        Export PNG Sequence
-                      </button>
-                      <button onClick={exportAsAEProject} className="w-full bg-[#1a1a1a] hover:bg-[#262626] text-[#e5e5e5] py-2.5 rounded text-xs font-medium transition-colors border border-[#333] flex items-center gap-3 px-4">
-                        <div className="w-6 h-6 rounded bg-orange-500/10 flex items-center justify-center text-orange-500">
-                          <FileArchive size={14} />
-                        </div>
-                        Export AE Project
-                      </button>
-                    </div>
-                   <button 
-                     onClick={() => setIsCreateMenuOpen(false)}
-                     className="w-full py-2 text-[10px] text-[#555] hover:text-[#a3a3a3] transition-colors uppercase tracking-widest font-bold"
-                   >
-                     Close Menu
-                   </button>
-                 </div>
-               )}
+               <button onClick={downloadModifiedSVGA} className="w-full bg-[#262626] hover:bg-[#333] text-[#e5e5e5] py-2 rounded text-xs font-medium transition-colors border border-[#333]">
+                 Save Modified SVGA
+               </button>
+               <button onClick={exportAsZip} className="w-full bg-[#262626] hover:bg-[#333] text-[#e5e5e5] py-2 rounded text-xs font-medium transition-colors border border-[#333]">
+                 Export PNG Sequence
+               </button>
+               <button onClick={exportAsAEProject} className="w-full bg-[#262626] hover:bg-[#333] text-[#e5e5e5] py-2 rounded text-xs font-medium transition-colors border border-[#333]">
+                 Export AE Project
+               </button>
              </div>
            </div>
-
-           {/* Conversion History */}
-           <div className="flex-1 flex flex-col min-h-0">
-             <div className="flex items-center justify-between mb-4">
-               <h3 className="text-xs font-bold text-[#e5e5e5] flex items-center gap-2">
-                 <Clock size={14} className="text-blue-500" />
-                 Conversion History
-               </h3>
-               {convertedFiles.length > 0 && (
-                 <button 
-                   onClick={() => setConvertedFiles([])}
-                   className="text-[10px] text-red-400 hover:text-red-300 transition-colors"
-                 >
-                   Clear All
-                 </button>
-               )}
-             </div>
-
-             <div className="flex-1 overflow-y-auto custom-scrollbar -mx-2 px-2 space-y-2">
-               {convertedFiles.map(file => (
-                 <div 
-                   key={file.id}
-                   className={`group p-3 rounded-xl border transition-all duration-200 cursor-pointer ${
-                     previewFile?.id === file.id 
-                       ? 'border-blue-500/50 bg-blue-500/5' 
-                       : 'border-[#262626] bg-[#111] hover:border-[#333]'
-                   }`}
-                   onClick={() => setPreviewFile(file)}
-                 >
-                   <div className="flex items-start gap-3">
-                     <div className={`w-10 h-10 rounded-lg flex items-center justify-center shrink-0 ${
-                       file.format === 'mp4' ? 'bg-blue-500/10 text-blue-500' :
-                       file.format === 'gif' ? 'bg-purple-500/10 text-purple-500' :
-                       file.format === 'webp' ? 'bg-emerald-500/10 text-emerald-500' :
-                       file.format === 'svga' ? 'bg-orange-500/10 text-orange-500' :
-                       'bg-gray-500/10 text-gray-500'
-                     }`}>
-                       {file.format === 'mp4' || file.format === 'webp' ? <Video size={18} /> :
-                        file.format === 'gif' ? <Layers size={18} /> :
-                        file.format === 'svga' ? <FileArchive size={18} /> :
-                        <Download size={18} />}
-                     </div>
-                     <div className="flex-1 min-w-0">
-                       <p className="text-xs font-medium text-[#e5e5e5] truncate mb-0.5">{file.name}</p>
-                       <div className="flex items-center gap-2 text-[10px] text-[#a3a3a3]">
-                         <span className="uppercase font-bold">{file.format}</span>
-                         <span>•</span>
-                         <span>{file.size}</span>
-                       </div>
-                     </div>
-                     <div className="flex flex-col gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                       <a 
-                         href={file.url} 
-                         download={file.name}
-                         onClick={(e) => e.stopPropagation()}
-                         className="p-1.5 hover:bg-white/10 rounded-md text-[#a3a3a3] hover:text-white transition-colors"
-                       >
-                         <Download size={14} />
-                       </a>
-                       <button 
-                         onClick={(e) => {
-                           e.stopPropagation();
-                           setConvertedFiles(prev => prev.filter(f => f.id !== file.id));
-                           if (previewFile?.id === file.id) setPreviewFile(null);
-                         }}
-                         className="p-1.5 hover:bg-red-500/10 rounded-md text-[#a3a3a3] hover:text-red-400 transition-colors"
-                       >
-                         <Trash2 size={14} />
-                       </button>
-                     </div>
-                   </div>
-                 </div>
-               ))}
-               {convertedFiles.length === 0 && (
-                 <div className="flex flex-col items-center justify-center py-12 text-center">
-                   <div className="w-12 h-12 rounded-full bg-[#1a1a1a] flex items-center justify-center mb-4 border border-[#262626]">
-                     <Clock size={20} className="text-[#333]" />
-                   </div>
-                   <p className="text-xs text-[#555] font-medium">No conversion history</p>
-                   <p className="text-[10px] text-[#333] mt-1">Files you convert will appear here</p>
-                 </div>
-               )}
-             </div>
-           </div>
-
-           {/* Preview Modal */}
-           {previewFile && (
-             <div className="fixed inset-0 z-[150] bg-black/95 backdrop-blur-xl flex items-center justify-center p-4 md:p-10">
-               <div className="max-w-5xl w-full bg-[#0a0a0a] rounded-3xl border border-[#262626] shadow-2xl overflow-hidden flex flex-col max-h-full">
-                 <div className="h-16 border-b border-[#262626] flex items-center justify-between px-8 shrink-0">
-                   <div className="flex items-center gap-4">
-                     <div className="w-10 h-10 rounded-xl bg-blue-500/10 flex items-center justify-center text-blue-500">
-                       <ExternalLink size={20} />
-                     </div>
-                     <div>
-                       <h3 className="text-sm font-bold text-white">{previewFile.name}</h3>
-                       <p className="text-[10px] text-[#a3a3a3] uppercase tracking-widest font-bold">Preview Mode • {previewFile.format}</p>
-                     </div>
-                   </div>
-                   <button 
-                     onClick={() => setPreviewFile(null)}
-                     className="w-10 h-10 rounded-full bg-[#1a1a1a] hover:bg-[#262626] flex items-center justify-center text-[#a3a3a3] hover:text-white transition-colors border border-[#333]"
-                   >
-                     <ChevronLeft size={20} className="rotate-90" />
-                   </button>
-                 </div>
-                 
-                 <div className="flex-1 overflow-hidden bg-black flex items-center justify-center p-8">
-                   {previewFile.format === 'mp4' || previewFile.format === 'webp' ? (
-                     <video 
-                       src={previewFile.url} 
-                       controls 
-                       autoPlay 
-                       loop 
-                       className="max-w-full max-h-full rounded-lg shadow-2xl"
-                     />
-                   ) : previewFile.format === 'gif' || previewFile.format === 'svga' ? (
-                     <img 
-                       src={previewFile.url} 
-                       className="max-w-full max-h-full object-contain rounded-lg shadow-2xl"
-                       referrerPolicy="no-referrer"
-                     />
-                   ) : (
-                     <div className="flex flex-col items-center gap-6">
-                       <div className="w-24 h-24 rounded-3xl bg-blue-500/10 flex items-center justify-center text-blue-500">
-                         <FileArchive size={48} />
-                       </div>
-                       <div className="text-center">
-                         <p className="text-white font-bold mb-2">Package Ready</p>
-                         <p className="text-[#a3a3a3] text-xs max-w-xs">This format cannot be previewed directly in the browser. Please download the file to view its contents.</p>
-                       </div>
-                       <a 
-                         href={previewFile.url} 
-                         download={previewFile.name}
-                         className="bg-blue-600 hover:bg-blue-500 text-white px-8 py-3 rounded-xl text-sm font-bold transition-all flex items-center gap-2"
-                       >
-                         <Download size={18} /> Download Now
-                       </a>
-                     </div>
-                   )}
-                 </div>
-
-                 <div className="h-20 border-t border-[#262626] flex items-center justify-between px-8 shrink-0 bg-[#0a0a0a]">
-                    <div className="flex items-center gap-6">
-                      <div>
-                        <p className="text-[10px] text-[#a3a3a3] uppercase tracking-widest mb-1">File Size</p>
-                        <p className="text-xs font-bold text-white">{previewFile.size || 'Unknown'}</p>
-                      </div>
-                      <div>
-                        <p className="text-[10px] text-[#a3a3a3] uppercase tracking-widest mb-1">Created At</p>
-                        <p className="text-xs font-bold text-white">{new Date(previewFile.timestamp).toLocaleTimeString()}</p>
-                      </div>
-                    </div>
-                    <div className="flex gap-3">
-                      <button 
-                        onClick={() => {
-                          setConvertedFiles(prev => prev.filter(f => f.id !== previewFile.id));
-                          setPreviewFile(null);
-                        }}
-                        className="px-6 py-2.5 rounded-xl text-xs font-bold text-red-400 hover:bg-red-500/10 transition-colors"
-                      >
-                        Delete
-                      </button>
-                      <a 
-                        href={previewFile.url} 
-                        download={previewFile.name}
-                        className="bg-white text-black px-8 py-2.5 rounded-xl text-xs font-bold hover:bg-gray-200 transition-colors flex items-center gap-2"
-                      >
-                        <Download size={14} /> Download
-                      </a>
-                    </div>
-                 </div>
-               </div>
-             </div>
-           )}
-         </aside>
+        </aside>
       </div>
       
       <style>{`

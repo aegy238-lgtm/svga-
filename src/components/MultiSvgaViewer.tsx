@@ -126,7 +126,7 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
     const newItems: MultiSvgaItem[] = [];
     
     for (const file of Array.from(files)) {
-      if (!(file?.name || '').toLowerCase().endsWith('.svga')) continue;
+      if (!file.name.toLowerCase().endsWith('.svga')) continue;
       
       const url = URL.createObjectURL(file);
       
@@ -248,13 +248,9 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
         cardH = (canvasHeight - (rows + 1) * padding) / rows;
       }
       
-      const safe = calculateSafeDimensions(canvasWidth, canvasHeight, 9437184);
-      const finalWidth = safe.width;
-      const finalHeight = safe.height;
-      
       const canvas = document.createElement('canvas');
-      canvas.width = finalWidth;
-      canvas.height = finalHeight;
+      canvas.width = canvasWidth;
+      canvas.height = canvasHeight;
       const ctx = canvas.getContext('2d', { alpha: false })!;
       
       let bgImg: HTMLImageElement | null = null;
@@ -283,24 +279,39 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
         target: new ArrayBufferTarget(),
         video: {
           codec: 'avc',
-          width: finalWidth,
-          height: finalHeight
+          width: canvasWidth,
+          height: canvasHeight
         },
         fastStart: 'in-memory'
       });
 
-      let hasEncoderError = false;
       const videoEncoder = new VideoEncoder({
         output: (chunk, metadata) => muxer.addVideoChunk(chunk, metadata),
         error: (e) => {
           console.error("Encoder Error:", e);
-          hasEncoderError = true;
           // Only alert if the encoder is not already closed
           if (videoEncoder.state !== 'closed') {
             alert("خطأ في ترميز الفيديو: " + e.message);
           }
         }
       });
+
+      try {
+        videoEncoder.configure({
+          codec: 'avc1.4D4033', // Main Profile, Level 5.1
+          width: canvasWidth,
+          height: canvasHeight,
+          bitrate: 4_000_000,
+          framerate: targetFps
+        });
+      } catch (e) {
+        console.error("Encoder Configuration Error:", e);
+        alert("خطأ في إعدادات ترميز الفيديو: " + (e instanceof Error ? e.message : String(e)));
+        document.body.removeChild(renderContainer);
+        setIsExporting(false);
+        setExportProgress(0);
+        return;
+      }
 
       const offscreenPlayers = items.map(item => {
         const w = items.length === 1 ? (selectedPreset ? selectedPreset.width : item.dimensions.width) : cardW;
@@ -326,24 +337,6 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
       // Wait for initialization and warmup
       await new Promise(resolve => setTimeout(resolve, 1500));
       offscreenPlayers.forEach(({ player }) => player.stepToFrame(0, false));
-
-      // Configure encoder right before starting the loop to avoid inactivity reclamation
-      try {
-        videoEncoder.configure({
-          codec: 'avc1.4D4033', // Main Profile, Level 5.1
-          width: finalWidth,
-          height: finalHeight,
-          bitrate: 4_000_000,
-          framerate: targetFps
-        });
-      } catch (e) {
-        console.error("Encoder Configuration Error:", e);
-        alert("خطأ في إعدادات ترميز الفيديو: " + (e instanceof Error ? e.message : String(e)));
-        document.body.removeChild(renderContainer);
-        setIsExporting(false);
-        setExportProgress(0);
-        return;
-      }
 
       for (let frame = 0; frame < totalFrames; frame++) {
         if (bgImg) {
@@ -417,25 +410,16 @@ export const MultiSvgaViewer: React.FC<MultiSvgaViewerProps> = ({ onCancel, curr
 
         const timestamp = (frame / targetFps) * 1_000_000;
         const videoFrame = new VideoFrame(canvas, { timestamp });
-        
-        // Wait if the encoder queue is too full
-        while (videoEncoder.encodeQueueSize > 10) {
-          await new Promise(r => requestAnimationFrame(r));
-        }
-        
-        if (hasEncoderError) break;
         videoEncoder.encode(videoFrame, { keyFrame: frame % 30 === 0 });
         videoFrame.close();
         
-        // Yield to the browser to prevent blocking the main thread and allow the encoder to work
+        // Throttled progress update
         if (frame % 5 === 0) {
-          await new Promise(r => requestAnimationFrame(r));
           setExportProgress(Math.round((frame / totalFrames) * 100));
         }
       }
 
       await videoEncoder.flush();
-      videoEncoder.close();
       muxer.finalize();
       const { buffer } = muxer.target as ArrayBufferTarget;
       const blob = new Blob([buffer], { type: 'video/mp4' });

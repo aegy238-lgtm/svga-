@@ -61,6 +61,31 @@ service cloud.firestore {
     match /activityLogs/{logId} {
       allow read: if isAdmin();
       allow create: if isAuthenticated(); // Users create logs on actions
+      allow delete: if isAdmin();
+    }
+
+    // Banned Emails
+    match /banned_emails/{emailId} {
+      allow read: if true; // Public check during login/signup
+      allow write: if isAdmin();
+    }
+
+    // Banned IPs
+    match /banned_ips/{ipId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Banned Devices
+    match /banned_devices/{deviceId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // Preset Backgrounds
+    match /presetBackgrounds/{bgId} {
+      allow read: if true;
+      allow write: if isAdmin();
     }
   }
 }

@@ -1,6 +1,5 @@
 export const svgaSchema = `
 syntax = "proto3";
-
 package com.opensource.svga;
 
 message MovieParams {
@@ -48,54 +47,19 @@ message ShapeEntity {
         KEEP = 3;
     }
     ShapeType type = 1;
-    message ShapeArgs {
-        string d = 1;
-    }
-    ShapeArgs shape = 2;
-    message RectArgs {
-        float x = 1;
-        float y = 2;
-        float width = 3;
-        float height = 4;
-        float cornerRadius = 5;
-    }
-    RectArgs rect = 3;
-    message EllipseArgs {
-        float x = 1;
-        float y = 2;
-        float radiusX = 3;
-        float radiusY = 4;
-    }
-    EllipseArgs ellipse = 4;
-    message ShapeStyle {
-        message RGBAColor {
-            float r = 1;
-            float g = 2;
-            float b = 3;
-            float a = 4;
-        }
-        RGBAColor fill = 1;
-        RGBAColor stroke = 2;
-        float strokeWidth = 3;
-        enum LineCap {
-            LineCap_BUTT = 0;
-            LineCap_ROUND = 1;
-            LineCap_SQUARE = 2;
-        }
-        LineCap lineCap = 4;
-        enum LineJoin {
-            LineJoin_MITER = 0;
-            LineJoin_ROUND = 1;
-            LineJoin_BEVEL = 2;
-        }
-        LineJoin lineJoin = 5;
-        float miterLimit = 6;
-        float lineDashI = 7;
-        float lineDashII = 8;
-        float lineDashIII = 9;
-    }
-    ShapeStyle styles = 5;
-    Transform transform = 6;
+    map<string, float> args = 2;
+    ShapeStyle styles = 3;
+    Transform transform = 4;
+}
+
+message ShapeStyle {
+    map<string, float> fill = 1;
+    map<string, float> stroke = 2;
+    float strokeWidth = 3;
+    string lineCap = 4;
+    string lineJoin = 5;
+    float miterLimit = 6;
+    repeated float lineDash = 7;
 }
 
 message FrameEntity {
@@ -104,6 +68,7 @@ message FrameEntity {
     Transform transform = 3;
     string clipPath = 4;
     repeated ShapeEntity shapes = 5;
+    string blendMode = 6;
 }
 
 message MovieEntity {

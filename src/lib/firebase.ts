@@ -13,18 +13,7 @@ const firebaseConfig = {
   appId: "1:843792729959:web:74ebc06495746fecd011c2"
 };
 
-let app;
-let auth: any = null;
-let db: any = null;
-let storage: any = null;
-
-try {
-  app = initializeApp(firebaseConfig);
-  auth = getAuth(app);
-  db = getFirestore(app);
-  storage = getStorage(app);
-} catch (e) {
-  console.warn("Firebase initialization failed, running in offline mode.");
-}
-
-export { auth, db, storage };
+const app = initializeApp(firebaseConfig);
+export const auth = getAuth(app);
+export const db = getFirestore(app);
+export const storage = getStorage(app);

@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '../../lib/firebase';
 
 interface SignupProps {
   onToggle: () => void;
@@ -28,6 +30,14 @@ export const Signup: React.FC<SignupProps> = ({ onToggle }) => {
     try {
       setError('');
       setLoading(true);
+
+      // Check if email is banned
+      const emailDocId = email.toLowerCase().replace(/\./g, '_');
+      const bannedDoc = await getDoc(doc(db, 'banned_emails', emailDocId));
+      if (bannedDoc.exists()) {
+        throw new Error('عذراً، هذا البريد الإلكتروني محظور من إنشاء حسابات جديدة.');
+      }
+
       await signup(email, password, name);
     } catch (err: any) {
       console.error("Signup Error:", err);

@@ -43,15 +43,7 @@ export const ProductModal: React.FC<ProductModalProps> = ({ product, whatsappNum
               )}
             </div>
           )}
-          {product.supportedFormats && product.supportedFormats.length > 0 && (
-            <div className="flex flex-wrap gap-2">
-              {product.supportedFormats.map(format => (
-                <span key={format} className="px-3 py-1 bg-indigo-500/20 text-indigo-300 rounded-full text-xs font-medium border border-indigo-500/30">
-                  {format}
-                </span>
-              ))}
-            </div>
-          )}
+          <p className="text-slate-300">{product.description}</p>
           <div className="flex items-center justify-between">
             <span className="text-2xl font-bold text-indigo-400">${product.price}</span>
             <button 
